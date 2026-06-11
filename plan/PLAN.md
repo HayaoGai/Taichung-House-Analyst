@@ -242,16 +242,9 @@ function filterHouses(allHouses) {
     const floor = h.floor ?? '';
     if (floor === '整棟/1F' || (!floor.includes('整棟') && !floor.includes('~'))) continue;
 
-    // 規則 4
+    // 規則 3
     if (!SECTION_ID_SET.has(Number(h.section_id))) continue;
 
-    // 規則 3（業務去重，置於最後，避免被剔除者佔用 key）
-    const present = (v) => v !== undefined && v !== null && v !== '';
-    if (present(h.price) && present(h.room) && present(h.houseage)) {
-      const key = `${h.price}|${h.room}|${h.houseage}`;
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-    }
     result.push(h);
   }
   return result;

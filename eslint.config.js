@@ -14,6 +14,8 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.es2021,
+        // Quasar router 用到 process.env（建置時被取代）；Worker 端的 setTimeout 等亦涵蓋於此
+        ...globals.node,
       },
       parserOptions: {
         tsconfigRootDir: projectRoot,
@@ -88,6 +90,6 @@ export default [
     },
   },
   {
-    ignores: [ 'dist/', 'node_modules/' ],
+    ignores: [ 'dist/', 'node_modules/', '.quasar/', '.wrangler/' ],
   },
 ]

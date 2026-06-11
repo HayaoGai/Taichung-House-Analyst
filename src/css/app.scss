@@ -1,0 +1,4 @@
+// 全域樣式（深色主題；頁面底色由 Quasar Dark 的 $dark-page 控制）
+body.body--dark {
+  background: $dark-page;
+}

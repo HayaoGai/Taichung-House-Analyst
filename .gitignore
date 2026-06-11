@@ -9,6 +9,12 @@ dist-ssr/
 build/
 out/
 
+# Quasar
+.quasar/
+
+# Wrangler / Cloudflare
+.wrangler/
+
 # Environment variables
 .env
 .env.local
