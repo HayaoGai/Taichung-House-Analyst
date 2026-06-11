@@ -10,7 +10,8 @@
 |---|---|
 | 前端 | Vue 3 + Quasar（SPA，`quasar build` → `dist/spa`） |
 | 後端 / 排程 | 單一 Cloudflare Worker（靜態資源 + API + Cron） |
-| 儲存 | Cloudflare Workers KV（`house_data` / `meta` 兩個 key） |
+| 儲存 | Cloudflare Workers KV（`house_data` / `meta` / `seen_ids` 三個 key） |
+| 通知 | LINE 官方帳號 push（首次出現的物件才通知） |
 | 登入 | Cloudflare Access（Zero Trust） |
 | 部署 | Wrangler |
 
@@ -40,6 +41,9 @@
 ```bash
 pnpm install
 
+# （可選）測試 LINE 通知：複製 .dev.vars.example 為 .dev.vars 並填入機密值
+cp .dev.vars.example .dev.vars
+
 # 終端機 A：跑後端 Worker（含 KV、Cron 模擬），預設 http://localhost:8787
 pnpm worker:dev
 
@@ -59,19 +63,26 @@ pnpm dev
    pnpm exec wrangler kv namespace create KV
    ```
 
-2. 登入並部署（會先 `quasar build` 再 `wrangler deploy`）：
+2. 設定 LINE 推播所需的 Worker secret（機密值，不寫死於程式或設定檔）：
+
+   ```bash
+   pnpm exec wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+   pnpm exec wrangler secret put LINE_USER_ID
+   ```
+
+3. 登入並部署（會先 `quasar build` 再 `wrangler deploy`）：
 
    ```bash
    pnpm exec wrangler login
    pnpm deploy
    ```
 
-3. 在 Cloudflare Zero Trust 建立 **Access Application** 保護該網域（含 `/` 與 `/api/*`），
+4. 在 Cloudflare Zero Trust 建立 **Access Application** 保護該網域（含 `/` 與 `/api/*`），
    Policy 設為僅允許本人 email（One-time PIN 或 Google 登入）。
    - 前端不需任何登入畫面；登入由 Access 在邊緣處理。
    - Cron 的 `scheduled` 為伺服器端事件，不受 Access 影響，照常執行。
 
-4. 部署後執行一次手動更新以建立初始資料（或等 ≤1 分鐘讓首次 cron 自動 seed）：
+5. 部署後執行一次手動更新以建立初始資料（或等 ≤1 分鐘讓首次 cron 自動 seed）：
 
    ```bash
    curl -X POST https://<你的網域>/api/refresh

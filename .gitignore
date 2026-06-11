@@ -14,6 +14,7 @@ out/
 
 # Wrangler / Cloudflare
 .wrangler/
+.dev.vars
 
 # Environment variables
 .env

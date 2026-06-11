@@ -39,6 +39,9 @@ export default [
     rules: {
       'vue/multi-word-component-names': 'off',
 
+      // 允許字串/樣板字面值中使用全形空白（LINE 訊息以全形空白對齊中文）
+      'no-irregular-whitespace': [ 'error', { skipStrings: true, skipTemplates: true } ],
+
       // ─── Spacing ──────────────────────────────────────────────
       'array-bracket-spacing': [ 'error', 'always' ],
       'arrow-spacing': 'error',

@@ -21,6 +21,10 @@ const SEQUENTIAL_GUARD = 60 // 安全網循序補抓的硬上限，避免無窮�
 const FETCH_TIMEOUT_MS = 10000 // 單次對外請求逾時
 const REFRESH_DEBOUNCE_MS = 10000 // /api/refresh 防連點：距上次更新 < 10 秒則略過實際抓取
 
+// LINE 推播（UPDATE v0.0.1 §4）
+const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push'
+const LINE_TEXT_LIMIT = 5000 // 單一 text 訊息上限，超過則截斷
+
 // 產生 240~360 秒（4~6 分鐘）的隨機間隔
 function randomIntervalSec () {
   return Math.floor( Math.random() * ( 360 - 240 + 1 ) ) + 240
@@ -186,6 +190,83 @@ async function readHouses ( env ) {
   }
 }
 
+// ── seen_ids（持久化、append-only）與 LINE 推播（UPDATE v0.0.1 §2、§4）────────────
+// 讀取曾經出現過的 houseid 陣列；首次執行（不存在）視為空陣列
+async function readSeenIds ( env ) {
+  const raw = await env.KV.get( 'seen_ids' )
+  if ( !raw ) return []
+  try {
+    const parsed = JSON.parse( raw )
+    return Array.isArray( parsed ) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+// 組 LINE 文字訊息：內容等同前端顯示欄位；超過 5000 字則截斷
+function buildLineText ( newHouses ) {
+  const blocks = newHouses.map( ( h ) => {
+    const photo = ( h.photo_url || '' ).replace( '400x300', '1000xwater2' )
+    const detailUrl = `https://sale.591.com.tw/home/house/detail/2/${ h.houseid }.html`
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${ encodeURIComponent( `${ h.section_name } ${ h.address }` ) }`
+    return [
+      `🏠 ${ h.title }`,
+      `格局：${ h.room }　屋齡：${ h.showhouseage }　樓層：${ h.floor }`,
+      `地址：${ h.section_name } - ${ h.address }`,
+      `總價：${ h.showprice } 萬`,
+      `照片：${ photo }`,
+      `詳情：${ detailUrl }`,
+      `地圖：${ mapsUrl }`,
+    ].join( '\n' )
+  } )
+
+  let text = `🆕 新物件 ${ newHouses.length } 筆\n\n` + blocks.join( '\n\n' )
+  if ( text.length > LINE_TEXT_LIMIT ) {
+    text = text.slice( 0, LINE_TEXT_LIMIT - 1 ) + '…' // 截斷（預期僅首次可能發生）
+  }
+  return text
+}
+
+async function sendLinePush ( env, text ) {
+  const res = await fetch( LINE_PUSH_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${ env.LINE_CHANNEL_ACCESS_TOKEN }`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify( {
+      to: env.LINE_USER_ID,
+      messages: [ { type: 'text', text } ],
+    } ),
+  } )
+  if ( !res.ok ) {
+    throw new Error( `LINE push failed: ${ res.status } ${ await res.text() }` )
+  }
+}
+
+// 通知區塊：對首次出現的物件送一次 LINE，並在成功後才追加 seen_ids（UPDATE v0.0.1 §5）。
+// 以獨立 try/catch 包住，使 LINE 失敗不影響正常週期；失敗時不寫 seen_ids，下個週期自動重試。
+async function notifyNewHouses ( env, slim ) {
+  try {
+    const seenIds = await readSeenIds( env ) // 持久化、append-only
+    const seenSet = new Set( seenIds )
+    const newHouses = slim.filter(
+      ( h ) => h.houseid != null && !seenSet.has( h.houseid ),
+    )
+
+    if ( newHouses.length > 0 ) {
+      // 一週期最多一次 push（單一 text 訊息，含全部新物件）
+      await sendLinePush( env, buildLineText( newHouses ) )
+      // 送出成功後才寫回 seen_ids：避免送失敗卻被標記為已通知
+      const updated = seenIds.concat( newHouses.map( ( h ) => h.houseid ) )
+      await env.KV.put( 'seen_ids', JSON.stringify( updated ) )
+    }
+    // 沒有新物件 → 不送 LINE、也不寫 seen_ids
+  } catch ( err ) {
+    console.error( 'LINE notify step failed (will retry next cycle):', err )
+  }
+}
+
 // ── 完整週期（runCycle），PLAN §5.4 ──────────────────────────────────────────
 async function runCycle ( env ) {
   const now = Date.now()
@@ -201,6 +282,9 @@ async function runCycle ( env ) {
       intervalSec,
       lastStatus: 'ok',
     } ) )
+
+    // 首次出現的物件 → LINE 通知 + 記錄 seen_ids（獨立 try/catch，不影響上方週期）
+    await notifyNewHouses( env, slim )
   } catch ( err ) {
     // 抓取失敗：保留上一份 house_data，僅延後下次嘗試（1 分鐘後重試）
     const prev = await readMeta( env )
