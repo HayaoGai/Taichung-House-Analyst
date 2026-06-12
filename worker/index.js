@@ -165,6 +165,9 @@ function pickFrontendFields ( h ) {
     address: h.address,
     showprice: h.showprice,
     photo_url: h.photo_url,
+    // 額外保留原始 price/houseage（不顯示，供黑名單與 LINE 去重比對；room 已於上方保留）
+    price: h.price,
+    houseage: h.houseage,
   }
 }
 
@@ -190,10 +193,22 @@ async function readHouses ( env ) {
   }
 }
 
-// ── seen_ids（持久化、append-only）與 LINE 推播（UPDATE v0.0.1 §2、§4）────────────
-// 讀取曾經出現過的 houseid 陣列；首次執行（不存在）視為空陣列
-async function readSeenIds ( env ) {
-  const raw = await env.KV.get( 'seen_ids' )
+// ── 黑名單 / 去重 helper（UPDATE v0.0.2 §3）─────────────────────────────────────
+// 黑名單與 LINE 去重共用的比對鍵：price|room|houseage
+function tripleKey ( h ) {
+  return `${ h.price }|${ h.room }|${ h.houseage }`
+}
+
+// 對房屋陣列套用黑名單（三項皆相同者過濾掉）
+function applyBlacklist ( houses, blacklist ) {
+  if ( !blacklist || blacklist.length === 0 ) return houses
+  const blockedSet = new Set( blacklist.map( tripleKey ) )
+  return houses.filter( ( h ) => !blockedSet.has( tripleKey( h ) ) )
+}
+
+// 黑名單（持久化、append-only；使用者按垃圾桶時追加）
+async function readBlacklist ( env ) {
+  const raw = await env.KV.get( 'blacklist' )
   if ( !raw ) return []
   try {
     const parsed = JSON.parse( raw )
@@ -203,20 +218,30 @@ async function readSeenIds ( env ) {
   }
 }
 
-// 組 LINE 文字訊息：內容等同前端顯示欄位；超過 5000 字則截斷
+// 已通知過的 tripleKey 字串陣列（持久化、append-only；僅有新通知時寫入）
+async function readNotifiedKeys ( env ) {
+  const raw = await env.KV.get( 'notified_keys' )
+  if ( !raw ) return []
+  try {
+    const parsed = JSON.parse( raw )
+    return Array.isArray( parsed ) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+// 組 LINE 文字訊息（UPDATE v0.0.2 §7：移除照片與地圖、格局/屋齡/樓層各自獨立成行）；超過 5000 字則截斷
 function buildLineText ( newHouses ) {
   const blocks = newHouses.map( ( h ) => {
-    const photo = ( h.photo_url || '' ).replace( '400x300', '1000xwater2' )
     const detailUrl = `https://sale.591.com.tw/home/house/detail/2/${ h.houseid }.html`
-    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${ encodeURIComponent( `${ h.section_name } ${ h.address }` ) }`
     return [
       `🏠 ${ h.title }`,
-      `格局：${ h.room }　屋齡：${ h.showhouseage }　樓層：${ h.floor }`,
+      `格局：${ h.room }`,
+      `屋齡：${ h.showhouseage }`,
+      `樓層：${ h.floor }`,
       `地址：${ h.section_name } - ${ h.address }`,
       `總價：${ h.showprice } 萬`,
-      `照片：${ photo }`,
       `詳情：${ detailUrl }`,
-      `地圖：${ mapsUrl }`,
     ].join( '\n' )
   } )
 
@@ -244,24 +269,26 @@ async function sendLinePush ( env, text ) {
   }
 }
 
-// 通知區塊：對首次出現的物件送一次 LINE，並在成功後才追加 seen_ids（UPDATE v0.0.1 §5）。
-// 以獨立 try/catch 包住，使 LINE 失敗不影響正常週期；失敗時不寫 seen_ids，下個週期自動重試。
+// 通知區塊（UPDATE v0.0.2 §7）：先套黑名單，再以 price/room/houseage（tripleKey）判斷是否已通知。
+// 以獨立 try/catch 包住，使 LINE 失敗不影響正常週期；失敗時不寫 notified_keys，下個週期自動重試。
 async function notifyNewHouses ( env, slim ) {
   try {
-    const seenIds = await readSeenIds( env ) // 持久化、append-only
-    const seenSet = new Set( seenIds )
-    const newHouses = slim.filter(
-      ( h ) => h.houseid != null && !seenSet.has( h.houseid ),
-    )
+    const [ blacklist, notifiedKeys ] = await Promise.all( [
+      readBlacklist( env ),
+      readNotifiedKeys( env ),
+    ] )
+    const visible = applyBlacklist( slim, blacklist ) // 黑名單物件不顯示也不通知
+    const notifiedSet = new Set( notifiedKeys )
+    const newHouses = visible.filter( ( h ) => !notifiedSet.has( tripleKey( h ) ) )
 
     if ( newHouses.length > 0 ) {
       // 一週期最多一次 push（單一 text 訊息，含全部新物件）
       await sendLinePush( env, buildLineText( newHouses ) )
-      // 送出成功後才寫回 seen_ids：避免送失敗卻被標記為已通知
-      const updated = seenIds.concat( newHouses.map( ( h ) => h.houseid ) )
-      await env.KV.put( 'seen_ids', JSON.stringify( updated ) )
+      // 送出成功才寫回；用 Set 去重避免同鍵重複堆積
+      const updated = [ ...new Set( notifiedKeys.concat( newHouses.map( tripleKey ) ) ) ]
+      await env.KV.put( 'notified_keys', JSON.stringify( updated ) )
     }
-    // 沒有新物件 → 不送 LINE、也不寫 seen_ids
+    // 沒有新物件 → 不送 LINE、也不寫 notified_keys
   } catch ( err ) {
     console.error( 'LINE notify step failed (will retry next cycle):', err )
   }
@@ -283,7 +310,7 @@ async function runCycle ( env ) {
       lastStatus: 'ok',
     } ) )
 
-    // 首次出現的物件 → LINE 通知 + 記錄 seen_ids（獨立 try/catch，不影響上方週期）
+    // 套黑名單後、首次出現（tripleKey）的物件 → LINE 通知 + 記錄 notified_keys（獨立 try/catch，不影響上方週期）
     await notifyNewHouses( env, slim )
   } catch ( err ) {
     // 抓取失敗：保留上一份 house_data，僅延後下次嘗試（1 分鐘後重試）
@@ -298,11 +325,16 @@ async function runCycle ( env ) {
   }
 }
 
-// ── 共用：組成 /api/houses 與 /api/refresh 的回應內容 ────────────────────────────
+// ── 共用：組成 /api/houses 與 /api/refresh 的回應內容（UPDATE v0.0.2 §6）──────────
+// 黑名單一律於消費端即時套用，故按下垃圾桶後重新整理即生效，不必等下一週期。
 async function buildHousesPayload ( env ) {
-  const [ houses, meta ] = await Promise.all( [ readHouses( env ), readMeta( env ) ] )
+  const [ houses, meta, blacklist ] = await Promise.all( [
+    readHouses( env ),
+    readMeta( env ),
+    readBlacklist( env ),
+  ] )
   return {
-    houses,
+    houses: applyBlacklist( houses, blacklist ),
     meta: meta ?? { lastUpdatedAt: null, nextRunAt: Date.now(), lastStatus: null },
   }
 }
@@ -344,6 +376,19 @@ export default {
         await runCycle( env )
       }
       return jsonResponse( await buildHousesPayload( env ) )
+    }
+
+    // POST /api/blacklist：將 price/room/houseage 加入黑名單（UPDATE v0.0.2 §5）
+    if ( url.pathname === '/api/blacklist' && request.method === 'POST' ) {
+      const { price, room, houseage } = await request.json()
+      const blacklist = await readBlacklist( env )
+      const key = `${ price }|${ room }|${ houseage }`
+      const exists = blacklist.some( ( b ) => `${ b.price }|${ b.room }|${ b.houseage }` === key )
+      if ( !exists ) {
+        blacklist.push( { price, room, houseage } )
+        await env.KV.put( 'blacklist', JSON.stringify( blacklist ) ) // 僅使用者操作時寫，頻率極低
+      }
+      return jsonResponse( { ok: true } )
     }
 
     // 其他 /api/* 一律回 404（避免落到 SPA fallback）

@@ -105,6 +105,24 @@ export function useHouses () {
     }
   }
 
+  // 加入黑名單（UPDATE v0.0.2 §8）：樂觀更新——本地立即移除所有 price/room/houseage 皆相同者，
+  // 同時 POST /api/blacklist 持久化（失敗僅記錄，重新整理即可還原）。
+  async function blacklistHouse ( house ) {
+    const { price, room, houseage } = house
+    houses.value = houses.value.filter(
+      ( h ) => !( h.price === price && h.room === room && h.houseage === houseage ),
+    )
+    try {
+      await fetch( '/api/blacklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify( { price, room, houseage } ),
+      } )
+    } catch ( e ) {
+      console.error( '加入黑名單失敗，可重新整理還原：', e )
+    }
+  }
+
   onMounted( () => {
     load()
     tick = setInterval( () => {
@@ -130,5 +148,6 @@ export function useHouses () {
     refreshing,
     error,
     refresh,
+    blacklistHouse,
   }
 }

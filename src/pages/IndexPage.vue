@@ -14,6 +14,7 @@ const {
   refreshing,
   error,
   refresh,
+  blacklistHouse,
 } = useHouses()
 
 const lastUpdatedText = computed( () => {
@@ -128,6 +129,7 @@ async function onRefresh () {
             :key="item.houseid"
             :house="item"
             class="q-mb-md"
+            @blacklist="blacklistHouse"
           />
         </template>
       </q-virtual-scroll>

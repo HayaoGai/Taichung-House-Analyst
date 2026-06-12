@@ -10,8 +10,9 @@
 |---|---|
 | 前端 | Vue 3 + Quasar（SPA，`quasar build` → `dist/spa`） |
 | 後端 / 排程 | 單一 Cloudflare Worker（靜態資源 + API + Cron） |
-| 儲存 | Cloudflare Workers KV（`house_data` / `meta` / `seen_ids` 三個 key） |
-| 通知 | LINE 官方帳號 push（首次出現的物件才通知） |
+| 儲存 | Cloudflare Workers KV（`house_data` / `meta` / `blacklist` / `notified_keys`） |
+| 通知 | LINE 官方帳號 push（首次出現的物件才通知；以 price/room/houseage 去重） |
+| 黑名單 | 卡片垃圾桶按鈕，將 price/room/houseage 三項皆相同者隱藏 |
 | 登入 | Cloudflare Access（Zero Trust） |
 | 部署 | Wrangler |
 
@@ -88,12 +89,19 @@ pnpm dev
    curl -X POST https://<你的網域>/api/refresh
    ```
 
+6. （v0.0.2 升級者）一次性刪除舊的 `seen_ids` key（已由 `notified_keys` 取代）：
+
+   ```bash
+   pnpm exec wrangler kv key delete --binding KV seen_ids
+   ```
+
 ## API
 
 | 方法 | 路徑 | 行為 |
 |---|---|---|
-| GET | `/api/houses` | 回傳 `{ houses, meta }`（KV 最新資料） |
-| POST | `/api/refresh` | 立即跑一次抓取週期並重置隨機週期，回傳最新 `{ houses, meta }`（距上次更新 < 10 秒則略過實際抓取） |
+| GET | `/api/houses` | 回傳 `{ houses, meta }`（KV 最新資料，已套用黑名單） |
+| POST | `/api/refresh` | 立即跑一次抓取週期並重置隨機週期，回傳最新 `{ houses, meta }`（已套用黑名單；距上次更新 < 10 秒則略過實際抓取） |
+| POST | `/api/blacklist` | body `{ price, room, houseage }`，將該三項加入黑名單（append-only，去重） |
 
 ## 免費方案額度
 

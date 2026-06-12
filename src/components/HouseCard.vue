@@ -5,6 +5,8 @@ const props = defineProps( {
   house: { type: Object, required: true },
 } )
 
+const emit = defineEmits( [ 'blacklist' ] )
+
 // 照片：將 400x300 換成 1000xwater2 高畫質版本（PLAN §6.2）
 const photo = computed( () => {
   const url = props.house?.photo_url ?? ''
@@ -82,11 +84,33 @@ function openDetail () {
         </div>
       </q-card-section>
     </div>
+
+    <!-- 右下角：加入黑名單（垃圾桶）。@click.stop 避免觸發整張卡片導向詳情頁 -->
+    <q-btn
+      class="house-card__trash"
+      icon="delete_outline"
+      color="grey-6"
+      flat
+      round
+      dense
+      @click.stop="emit( 'blacklist', house )"
+    >
+      <q-tooltip>加入黑名單（隱藏相同格局/屋齡/總價的物件）</q-tooltip>
+    </q-btn>
   </q-card>
 </template>
 
 <style scoped lang="scss">
 .house-card {
+  position: relative;
+
+  &__trash {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    z-index: 1;
+  }
+
   &__photo {
     width: 200px;
     min-width: 200px;
