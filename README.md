@@ -2,8 +2,6 @@
 
 個人用的房屋物件監控看板：後端定期（隨機 4~6 分鐘一次）向 591 BFF API 抓取台中符合條件的待售物件，篩選後存入 Cloudflare KV；前端（Vue 3 + Quasar）以滾動式虛擬列表顯示，右上角有「下次更新倒數」與「手動更新」。整站以 Cloudflare Access 保護。
 
-完整規格見 [PLAN.md](./PLAN.md)。
-
 ## 技術堆疊
 
 | 項目 | 選擇 |
@@ -33,8 +31,6 @@
    └─ composables/useHouses.js  # 資料流、倒數、自動銜接、手動更新
 ```
 
-> 備註：PLAN §8.1 的設定示意把 `main` 指向 `src/worker.js`；因前端原始碼已佔用 `src/`（Quasar），為避免衝突，本專案將 Worker 置於 `worker/index.js`，並於 `wrangler.jsonc` 對應調整。
-
 ## 本機開發
 
 需 Node 20+ 與 pnpm。
@@ -56,7 +52,7 @@ pnpm dev
 - `wrangler dev` 預設使用本機模擬的 KV，資料僅存於本機。
 - 可在 wrangler dev 互動介面按 `l` 觸發排程（scheduled）事件以測試抓取。
 
-## 部署（對應 PLAN §8.2）
+## 部署
 
 1. 建立 KV namespace，並把回傳的 `id` 填入 `wrangler.jsonc` 的 `kv_namespaces[0].id`：
 

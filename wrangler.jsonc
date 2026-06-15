@@ -1,9 +1,8 @@
 {
-  // ── Cloudflare Worker 設定（PLAN §8.1）──────────────────────────────────────
+  // ── Cloudflare Worker 設定 ──────────────────────────────────────
   "name": "house-monitor",
   "main": "worker/index.js",
   "compatibility_date": "2026-01-01",
-
   // 靜態資源：掛載 Quasar build 產出的 SPA
   "assets": {
     "directory": "./dist/spa",
@@ -11,20 +10,24 @@
     "binding": "ASSETS",
     // 讓 Worker 先處理 /api/*（否則 SPA fallback 會把 /api/* 也吃成 index.html）；
     // 其餘路徑仍由靜態資源直接服務（含 SPA fallback）。
-    "run_worker_first": [ "/api/*" ]
+    "run_worker_first": [
+      "/api/*"
+    ]
   },
-
-  // KV：單一 namespace，鍵為 house_data / meta（PLAN §4）
+  // KV：單一 namespace，鍵為 house_data / meta
   // 部署前請以 `wrangler kv namespace create KV` 建立，並把回傳的 id 填入下方。
   "kv_namespaces": [
-    { "binding": "KV", "id": "8d3ac389a63943d38ca889cc33d4c0db" }
+    {
+      "binding": "KV",
+      "id": "8d3ac389a63943d38ca889cc33d4c0db"
+    }
   ],
-
-  // Cron：每分鐘觸發；實際是否抓取由 worker 依 meta.nextRunAt 閘門判斷（PLAN §5.1）
+  // Cron：每分鐘觸發；實際是否抓取由 worker 依 meta.nextRunAt 閘門判斷
   "triggers": {
-    "crons": [ "* * * * *" ]
+    "crons": [
+      "* * * * *"
+    ]
   },
-
   "observability": {
     "enabled": true
   }

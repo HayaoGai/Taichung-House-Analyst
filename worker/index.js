@@ -1,17 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Cloudflare Worker：591 待售物件監控看板 後端
 //
-// 職責（單一 Worker 同時負責三件事，見 PLAN §2、§5）：
+// 職責（單一 Worker 同時負責三件事）：
 //   1. fetch handler   → API 路由（/api/houses、/api/refresh），其餘交給靜態資源（SPA）
 //   2. scheduled handler → Cron（每分鐘觸發），依 meta.nextRunAt 閘門決定是否真的抓取
 //   3. 抓取 / 篩選 / 寫入 KV
 //
-// 注意（PLAN §8.1 的設定示意把 main 指向 src/worker.js）：
+// 注意：
 //   本專案前端原始碼位於 src/（Quasar），為避免與 Quasar 來源衝突，
 //   Worker 改置於 worker/index.js，並於 wrangler.jsonc 將 main 指向此檔。
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── 常數（PLAN §9）─────────────────────────────────────────────────────────────
+// ── 常數 ──────────────────────────────────────────────────────────────
 const SECTION_IDS = [ 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 116, 117, 118 ]
 const SECTION_ID_SET = new Set( SECTION_IDS )
 
@@ -21,7 +21,7 @@ const SEQUENTIAL_GUARD = 60 // 安全網循序補抓的硬上限，避免無窮�
 const FETCH_TIMEOUT_MS = 10000 // 單次對外請求逾時
 const REFRESH_DEBOUNCE_MS = 10000 // /api/refresh 防連點：距上次更新 < 10 秒則略過實際抓取
 
-// LINE 推播（UPDATE v0.0.1 §4）
+// LINE 推播
 const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push'
 const LINE_TEXT_LIMIT = 5000 // 單一 text 訊息上限，超過則截斷
 
@@ -30,7 +30,7 @@ function randomIntervalSec () {
   return Math.floor( Math.random() * ( 360 - 240 + 1 ) ) + 240
 }
 
-// ── 591 BFF API（headers 與 query 需照抄，$ 為 591 query 語法字面值，PLAN §5.2）──
+// ── 591 BFF API（headers 與 query 需照抄，$ 為 591 query 語法字面值）──
 const REQUEST_HEADERS = {
   'accept': '*/*',
   'accept-language': 'zh-TW,zh;q=0.9',
@@ -46,7 +46,7 @@ function buildUrl ( firstRow ) {
   return `https://bff-house.591.com.tw/v1/web/sale/list?timestamp=${ ts }&type=2&category=1&regionid=8&kind=9&price=$0_$1500&shape=3,4&houseage=$0_$25&firstRow=${ firstRow }&order=price_asc`
 }
 
-// 帶逾時 + 單次重試（指數退避）的對外抓取（PLAN §5.6）
+// 帶逾時 + 單次重試（指數退避）的對外抓取
 async function fetchPage ( firstRow, attempt = 0 ) {
   const controller = new AbortController()
   const timer = setTimeout( () => controller.abort(), FETCH_TIMEOUT_MS )
@@ -84,7 +84,7 @@ function chunk ( arr, n ) {
   return out
 }
 
-// ── 抓取（分頁、分批、去重、安全網），PLAN §5.2 ───────────────────────────────
+// ── 抓取（分頁、分批、去重、安全網） ───────────────────────────────
 async function scrapeAll () {
   const all = []
   const seenIds = new Set()
@@ -134,11 +134,11 @@ async function scrapeAll () {
   return all
 }
 
-// ── 篩選（業務規則），PLAN §5.3 ──────────────────────────────────────────────
+// ── 篩選（業務規則） ──────────────────────────────────────────────
 function filterHouses ( allHouses ) {
   const result = []
   for ( const h of allHouses ) {
-    // 規則 1：photoNum 為 0 → 剔除（photoNum 確為駝峰命名，照實作，PLAN §10.1）
+    // 規則 1：photoNum 為 0 → 剔除（photoNum 確為駝峰命名，照實作）
     if ( h.photoNum === 0 ) continue
 
     // 規則 2：樓層（缺值視為空字串，依規則會被剔除）
@@ -148,12 +148,15 @@ function filterHouses ( allHouses ) {
     // 規則 3：section_id 不在允許清單 → 剔除
     if ( !SECTION_ID_SET.has( Number( h.section_id ) ) ) continue
 
+    // 規則 4：屋齡 > 25 → 剔除（houseage 缺值/非數字時 Number 為 NaN，比較為 false，予以保留）
+    if ( Number( h.houseage ) > 25 ) continue
+
     result.push( h )
   }
   return result
 }
 
-// ── 只保留前端需要的欄位以節省 KV 容量，PLAN §6.2 ─────────────────────────────
+// ── 只保留前端需要的欄位以節省 KV 容量 ─────────────────────────────
 function pickFrontendFields ( h ) {
   return {
     houseid: h.houseid,
@@ -193,17 +196,17 @@ async function readHouses ( env ) {
   }
 }
 
-// ── 黑名單 / 去重 helper（UPDATE v0.0.2 §3）─────────────────────────────────────
-// 黑名單與 LINE 去重共用的比對鍵：price|room|houseage
-function tripleKey ( h ) {
-  return `${ h.price }|${ h.room }|${ h.houseage }`
+// ── 黑名單 / 去重 helper ──────────────────────────────────────
+// 黑名單與 LINE 去重共用的比對鍵：price|room|houseage|address（四項皆相同視為同一筆）
+function matchKey ( h ) {
+  return `${ h.price }|${ h.room }|${ h.houseage }|${ h.address }`
 }
 
-// 對房屋陣列套用黑名單（三項皆相同者過濾掉）
+// 對房屋陣列套用黑名單（四項皆相同者過濾掉）
 function applyBlacklist ( houses, blacklist ) {
   if ( !blacklist || blacklist.length === 0 ) return houses
-  const blockedSet = new Set( blacklist.map( tripleKey ) )
-  return houses.filter( ( h ) => !blockedSet.has( tripleKey( h ) ) )
+  const blockedSet = new Set( blacklist.map( matchKey ) )
+  return houses.filter( ( h ) => !blockedSet.has( matchKey( h ) ) )
 }
 
 // 黑名單（持久化、append-only；使用者按垃圾桶時追加）
@@ -230,7 +233,7 @@ async function readNotifiedKeys ( env ) {
   }
 }
 
-// 組 LINE 文字訊息（UPDATE v0.0.2 §7：移除照片與地圖、格局/屋齡/樓層各自獨立成行）；超過 5000 字則截斷
+// 組 LINE 文字訊息（移除照片與地圖、格局/屋齡/樓層各自獨立成行）；超過 5000 字則截斷
 function buildLineText ( newHouses ) {
   const blocks = newHouses.map( ( h ) => {
     const detailUrl = `https://sale.591.com.tw/home/house/detail/2/${ h.houseid }.html`
@@ -269,7 +272,7 @@ async function sendLinePush ( env, text ) {
   }
 }
 
-// 通知區塊（UPDATE v0.0.2 §7）：先套黑名單，再以 price/room/houseage（tripleKey）判斷是否已通知。
+// 通知區塊：先套黑名單，再以 price/room/houseage/address（matchKey）判斷是否已通知。
 // 以獨立 try/catch 包住，使 LINE 失敗不影響正常週期；失敗時不寫 notified_keys，下個週期自動重試。
 async function notifyNewHouses ( env, slim ) {
   try {
@@ -279,13 +282,13 @@ async function notifyNewHouses ( env, slim ) {
     ] )
     const visible = applyBlacklist( slim, blacklist ) // 黑名單物件不顯示也不通知
     const notifiedSet = new Set( notifiedKeys )
-    const newHouses = visible.filter( ( h ) => !notifiedSet.has( tripleKey( h ) ) )
+    const newHouses = visible.filter( ( h ) => !notifiedSet.has( matchKey( h ) ) )
 
     if ( newHouses.length > 0 ) {
       // 一週期最多一次 push（單一 text 訊息，含全部新物件）
       await sendLinePush( env, buildLineText( newHouses ) )
       // 送出成功才寫回；用 Set 去重避免同鍵重複堆積
-      const updated = [ ...new Set( notifiedKeys.concat( newHouses.map( tripleKey ) ) ) ]
+      const updated = [ ...new Set( notifiedKeys.concat( newHouses.map( matchKey ) ) ) ]
       await env.KV.put( 'notified_keys', JSON.stringify( updated ) )
     }
     // 沒有新物件 → 不送 LINE、也不寫 notified_keys
@@ -294,7 +297,7 @@ async function notifyNewHouses ( env, slim ) {
   }
 }
 
-// ── 完整週期（runCycle），PLAN §5.4 ──────────────────────────────────────────
+// ── 完整週期（runCycle） ──────────────────────────────────────────
 async function runCycle ( env ) {
   const now = Date.now()
   try {
@@ -325,7 +328,7 @@ async function runCycle ( env ) {
   }
 }
 
-// ── 共用：組成 /api/houses 與 /api/refresh 的回應內容（UPDATE v0.0.2 §6）──────────
+// ── 共用：組成 /api/houses 與 /api/refresh 的回應內容 ──────────
 // 黑名單一律於消費端即時套用，故按下垃圾桶後重新整理即生效，不必等下一週期。
 async function buildHousesPayload ( env ) {
   const [ houses, meta, blacklist ] = await Promise.all( [
@@ -348,7 +351,7 @@ function jsonResponse ( data, init = {} ) {
 
 // ── Worker 入口 ──────────────────────────────────────────────────────────────
 export default {
-  // Cron（每分鐘觸發）：依 nextRunAt 閘門決定是否真的執行抓取週期（PLAN §5.1）
+  // Cron（每分鐘觸發）：依 nextRunAt 閘門決定是否真的執行抓取週期
   async scheduled ( event, env, ctx ) {
     const meta = await readMeta( env )
     const now = Date.now()
@@ -357,7 +360,7 @@ export default {
     }
   },
 
-  // API 路由（PLAN §5.5）
+  // API 路由
   async fetch ( request, env ) {
     const url = new URL( request.url )
 
@@ -378,14 +381,14 @@ export default {
       return jsonResponse( await buildHousesPayload( env ) )
     }
 
-    // POST /api/blacklist：將 price/room/houseage 加入黑名單（UPDATE v0.0.2 §5）
+    // POST /api/blacklist：將 price/room/houseage/address 加入黑名單
     if ( url.pathname === '/api/blacklist' && request.method === 'POST' ) {
-      const { price, room, houseage } = await request.json()
+      const { price, room, houseage, address } = await request.json()
       const blacklist = await readBlacklist( env )
-      const key = `${ price }|${ room }|${ houseage }`
-      const exists = blacklist.some( ( b ) => `${ b.price }|${ b.room }|${ b.houseage }` === key )
+      const key = matchKey( { price, room, houseage, address } )
+      const exists = blacklist.some( ( b ) => matchKey( b ) === key )
       if ( !exists ) {
-        blacklist.push( { price, room, houseage } )
+        blacklist.push( { price, room, houseage, address } )
         await env.KV.put( 'blacklist', JSON.stringify( blacklist ) ) // 僅使用者操作時寫，頻率極低
       }
       return jsonResponse( { ok: true } )

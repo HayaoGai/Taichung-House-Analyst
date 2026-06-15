@@ -1,6 +1,6 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 
-// 封裝看板的資料流與更新行為（對應 PLAN §6.3）。
+// 封裝看板的資料流與更新行為。
 // 真實的倒數來源是後端 meta.nextRunAt；前端只負責顯示與在歸零後銜接，
 // 避免前後端時間不一致。
 export function useHouses () {
@@ -105,18 +105,18 @@ export function useHouses () {
     }
   }
 
-  // 加入黑名單（UPDATE v0.0.2 §8）：樂觀更新——本地立即移除所有 price/room/houseage 皆相同者，
+  // 加入黑名單：樂觀更新——本地立即移除所有 price/room/houseage/address 皆相同者，
   // 同時 POST /api/blacklist 持久化（失敗僅記錄，重新整理即可還原）。
   async function blacklistHouse ( house ) {
-    const { price, room, houseage } = house
+    const { price, room, houseage, address } = house
     houses.value = houses.value.filter(
-      ( h ) => !( h.price === price && h.room === room && h.houseage === houseage ),
+      ( h ) => !( h.price === price && h.room === room && h.houseage === houseage && h.address === address ),
     )
     try {
       await fetch( '/api/blacklist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify( { price, room, houseage } ),
+        body: JSON.stringify( { price, room, houseage, address } ),
       } )
     } catch ( e ) {
       console.error( '加入黑名單失敗，可重新整理還原：', e )

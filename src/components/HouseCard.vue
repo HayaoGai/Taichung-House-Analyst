@@ -3,11 +3,13 @@ import { computed } from 'vue'
 
 const props = defineProps( {
   house: { type: Object, required: true },
+  // 重複物件（price/room/houseage/address 與前面某筆皆相同）→ 右上角顯示 🔄
+  duplicate: { type: Boolean, default: false },
 } )
 
 const emit = defineEmits( [ 'blacklist' ] )
 
-// 照片：將 400x300 換成 1000xwater2 高畫質版本（PLAN §6.2）
+// 照片：將 400x300 換成 1000xwater2 高畫質版本
 const photo = computed( () => {
   const url = props.house?.photo_url ?? ''
   return url ? url.replace( '400x300', '1000xwater2' ) : ''
@@ -85,6 +87,15 @@ function openDetail () {
       </q-card-section>
     </div>
 
+    <!-- 右上角：重複物件標記 🔄（price/room/houseage/address 與前面某筆皆相同） -->
+    <div
+      v-if="duplicate"
+      class="house-card__dup"
+    >
+      🔄
+      <q-tooltip>重複物件（與前面某筆的格局/屋齡/總價/地址皆相同）</q-tooltip>
+    </div>
+
     <!-- 右下角：加入黑名單（垃圾桶）。@click.stop 避免觸發整張卡片導向詳情頁 -->
     <q-btn
       class="house-card__trash"
@@ -109,6 +120,16 @@ function openDetail () {
     right: 4px;
     bottom: 4px;
     z-index: 1;
+  }
+
+  &__dup {
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    z-index: 1;
+    font-size: 18px;
+    line-height: 1;
+    cursor: help;
   }
 
   &__photo {

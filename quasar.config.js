@@ -1,5 +1,5 @@
 // Quasar App (app-vite v2) 設定檔
-// 產出 SPA 至 dist/spa，供 Cloudflare Worker 當作靜態資源掛載（見 PLAN §2、§8.1）
+// 產出 SPA 至 dist/spa，供 Cloudflare Worker 當作靜態資源掛載
 import { defineConfig } from '#q-app/wrappers'
 import { fileURLToPath } from 'node:url'
 

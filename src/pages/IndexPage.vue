@@ -17,6 +17,18 @@ const {
   blacklistHouse,
 } = useHouses()
 
+// 標記重複物件：依顯示順序，若 price/room/houseage/address 皆與前面某筆相同，
+// 則該筆標記 _duplicate（前端右上角顯示 🔄）；第一筆不標記。
+const decoratedHouses = computed( () => {
+  const seen = new Set()
+  return houses.value.map( ( h ) => {
+    const key = `${ h.price }|${ h.room }|${ h.houseage }|${ h.address }`
+    const duplicate = seen.has( key )
+    seen.add( key )
+    return { ...h, _duplicate: duplicate }
+  } )
+} )
+
 const lastUpdatedText = computed( () => {
   if ( !lastUpdatedAt.value ) return '尚未更新'
   const d = new Date( lastUpdatedAt.value )
@@ -120,7 +132,7 @@ async function onRefresh () {
       <!-- 滾動式（虛擬滾動）列表，不分頁 -->
       <q-virtual-scroll
         v-else
-        :items="houses"
+        :items="decoratedHouses"
         :virtual-scroll-item-size="166"
         class="houses-scroll col"
       >
@@ -128,6 +140,7 @@ async function onRefresh () {
           <HouseCard
             :key="item.houseid"
             :house="item"
+            :duplicate="item._duplicate"
             class="q-mb-md"
             @blacklist="blacklistHouse"
           />
