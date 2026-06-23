@@ -1,6 +1,7 @@
 {
 	"name": "taichung-house-analyst",
 	"version": "1.0.0",
+	"productName": "591 待售物件監控看板",
 	"description": "591 待售物件監控看板（Quasar SPA + Cloudflare Worker）",
 	"private": true,
 	"type": "module",
