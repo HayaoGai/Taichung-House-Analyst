@@ -1,6 +1,6 @@
 {
   // ── Cloudflare Worker 設定 ──────────────────────────────────────
-  "name": "house-monitor",
+  "name": "taichung-house-analyst",
   "main": "worker/index.js",
   "compatibility_date": "2026-01-01",
   // 靜態資源：掛載 Quasar build 產出的 SPA

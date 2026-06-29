@@ -12,7 +12,7 @@
 | 通知 | LINE 官方帳號 push（首次出現的物件才通知；以 price/room/houseage 去重） |
 | 黑名單 | 卡片垃圾桶按鈕，將 price/room/houseage 三項皆相同者隱藏 |
 | 登入 | Cloudflare Access（Zero Trust） |
-| 部署 | Wrangler |
+| 部署 | Workers Builds（連接 GitHub，推送即自動建置部署）；亦保留 Wrangler 手動部署 |
 
 ## 專案結構
 
@@ -54,42 +54,75 @@ pnpm dev
 
 ## 部署
 
+採 **Workers Builds**：將此 Worker 連接 GitHub 儲存庫，推送至 `master` 即自動建置並部署；
+其他分支則建立預覽版本（preview）。Git 連接屬 OAuth 授權流程，僅能於 Cloudflare 儀表板設定。
+
+### 一次性前置（沿用既有資源，僅需做一次）
+
 1. 建立 KV namespace，並把回傳的 `id` 填入 `wrangler.jsonc` 的 `kv_namespaces[0].id`：
 
    ```bash
    pnpm exec wrangler kv namespace create KV
    ```
 
-2. 設定 LINE 推播所需的 Worker secret（機密值，不寫死於程式或設定檔）：
+2. 設定 LINE 推播所需的 Worker **執行時 secret**（與部署方式無關，設定後長期保留）：
 
    ```bash
    pnpm exec wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
    pnpm exec wrangler secret put LINE_USER_ID
    ```
 
-3. 登入並部署（會先 `quasar build` 再 `wrangler deploy`）：
+   > 注意：這些是「執行時」機密，非「建置時」變數。Workers Builds 的 Build variables and secrets
+   > 僅在建置階段可見，本專案的 LINE 機密不需放在那裡。
 
-   ```bash
-   pnpm exec wrangler login
-   pnpm deploy
-   ```
+### 連接 GitHub 自動部署（Workers Builds）
 
-4. 在 Cloudflare Zero Trust 建立 **Access Application** 保護該網域（含 `/` 與 `/api/*`），
+> 前提：Cloudflare 上的 Worker 名稱必須與 `wrangler.jsonc` 的 `name`（`house-monitor`）一致，否則建置會失敗。
+> 若尚未建立該 Worker，可先手動部署一次（見下方「手動部署」）以建立同名 Worker。
+
+1. Cloudflare 儀表板 → **Workers & Pages** → 選擇 `house-monitor`。
+2. **Settings** → **Builds** → **Connect**，依指示授權 Cloudflare 的 GitHub App
+   並選擇 `HayaoGai/taichung-house-analyst` 儲存庫。
+3. 設定建置參數：
+
+   | 欄位 | 值 |
+   |---|---|
+   | Git branch（生產分支） | `master`（儀表板預設為 `main`，**務必改成 `master`**） |
+   | Build command | `pnpm run build` |
+   | Deploy command | `npx wrangler deploy`（預設值，保持即可） |
+   | Non-production branch deploy command | `npx wrangler versions upload`（預設值，保持即可） |
+   | Root directory | 留空（即儲存庫根目錄） |
+
+   - 套件管理器：偵測到 `pnpm-lock.yaml` 會自動使用 pnpm，無需設定。
+   - Node 版本：由根目錄 `.node-version`（`22`）決定。
+
+4. 儲存後推送一個 commit 至 `master` 觸發首次自動建置與部署；之後每次推送 `master` 都會自動部署。
+
+6. 在 Cloudflare Zero Trust 建立 **Access Application** 保護該網域（含 `/` 與 `/api/*`），
    Policy 設為僅允許本人 email（One-time PIN 或 Google 登入）。
    - 前端不需任何登入畫面；登入由 Access 在邊緣處理。
    - Cron 的 `scheduled` 為伺服器端事件，不受 Access 影響，照常執行。
 
-5. 部署後執行一次手動更新以建立初始資料（或等 ≤1 分鐘讓首次 cron 自動 seed）：
+7. 首次部署後執行一次手動更新以建立初始資料（或等 ≤1 分鐘讓首次 cron 自動 seed）：
 
    ```bash
    curl -X POST https://<你的網域>/api/refresh
    ```
 
-6. （v0.0.2 升級者）一次性刪除舊的 `seen_ids` key（已由 `notified_keys` 取代）：
+8. （v0.0.2 升級者）一次性刪除舊的 `seen_ids` key（已由 `notified_keys` 取代）：
 
    ```bash
    pnpm exec wrangler kv key delete --binding KV seen_ids
    ```
+
+### 手動部署（備援）
+
+若需繞過 Workers Builds 直接從本機部署（會先 `quasar build` 再 `wrangler deploy`）：
+
+```bash
+pnpm exec wrangler login
+pnpm deploy
+```
 
 ## API
 

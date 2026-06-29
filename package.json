@@ -6,6 +6,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
+		"build": "quasar build",
 		"deploy": "quasar build && wrangler deploy"
 	},
 	"dependencies": {
