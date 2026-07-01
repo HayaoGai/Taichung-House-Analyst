@@ -15,9 +15,19 @@
 const SECTION_IDS = [ 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 116, 117, 118 ]
 const SECTION_ID_SET = new Set( SECTION_IDS )
 
-const MAX_PAGES = 45 // 每週期外部請求上限（保守，免費上限 50）
-const BATCH_SIZE = 6 // 每批並行請求上限（Worker 對外同時 6 條連線）
-const SEQUENTIAL_GUARD = 60 // 安全網循序補抓的硬上限，避免無窮迴圈
+// 591 list API 單次最多吃 5 個 section（第 6 個起靜默忽略），故將里區每 5 個切一組，逐組查詢。
+// 由 591 端先過濾里區，抓回與待解析的資料量大減（實測全台中 778 筆 → 這 16 里區僅約 126 筆），
+// 藉此把 Worker 的 JSON 解析 CPU 壓在免費方案 10ms 上限內。
+const SECTION_GROUP_SIZE = 5
+const SECTION_GROUPS = ( () => {
+  const groups = []
+  for ( let i = 0; i < SECTION_IDS.length; i += SECTION_GROUP_SIZE ) {
+    groups.push( SECTION_IDS.slice( i, i + SECTION_GROUP_SIZE ).join( ',' ) )
+  }
+  return groups
+} )()
+
+const MAX_PAGES = 45 // 每週期對外請求「總數」上限（保守，免費 subrequest 上限 50）
 const FETCH_TIMEOUT_MS = 10000 // 單次對外請求逾時
 const REFRESH_DEBOUNCE_MS = 10000 // /api/refresh 防連點：距上次更新 < 10 秒則略過實際抓取
 
@@ -41,17 +51,17 @@ const REQUEST_HEADERS = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
 }
 
-function buildUrl ( firstRow ) {
+function buildUrl ( firstRow, sectionCsv ) {
   const ts = Date.now()
-  return `https://bff-house.591.com.tw/v1/web/sale/list?timestamp=${ ts }&type=2&category=1&regionid=8&kind=9&price=$0_$1500&shape=3,4&houseage=$0_$25&firstRow=${ firstRow }&order=price_asc`
+  return `https://bff-house.591.com.tw/v1/web/sale/list?timestamp=${ ts }&type=2&category=1&regionid=8&kind=9&price=$0_$1500&shape=3,4&houseage=$0_$25&section=${ sectionCsv }&firstRow=${ firstRow }&order=price_asc`
 }
 
 // 帶逾時 + 單次重試（指數退避）的對外抓取
-async function fetchPage ( firstRow, attempt = 0 ) {
+async function fetchPage ( firstRow, sectionCsv, attempt = 0 ) {
   const controller = new AbortController()
   const timer = setTimeout( () => controller.abort(), FETCH_TIMEOUT_MS )
   try {
-    const res = await fetch( buildUrl( firstRow ), {
+    const res = await fetch( buildUrl( firstRow, sectionCsv ), {
       method: 'GET',
       headers: REQUEST_HEADERS,
       signal: controller.signal,
@@ -66,7 +76,7 @@ async function fetchPage ( firstRow, attempt = 0 ) {
     if ( attempt < 1 ) {
       // 單次重試：退避 ~500ms（不引入隨機以維持可預期）
       await sleep( 500 )
-      return fetchPage( firstRow, attempt + 1 )
+      return fetchPage( firstRow, sectionCsv, attempt + 1 )
     }
     throw err
   } finally {
@@ -78,13 +88,10 @@ function sleep ( ms ) {
   return new Promise( ( resolve ) => setTimeout( resolve, ms ) )
 }
 
-function chunk ( arr, n ) {
-  const out = []
-  for ( let i = 0; i < arr.length; i += n ) out.push( arr.slice( i, i + n ) )
-  return out
-}
-
-// ── 抓取（分頁、分批、去重、安全網） ───────────────────────────────
+// ── 抓取（分組、逐組分頁、去重） ───────────────────────────────
+// 逐個里區分組（每組 ≤5）循序分頁抓取。各組 total 都很小（實測整組最多約 69 筆 ≈ 3 頁），
+// 故不再需要大量並行與循序補抓安全網；以 firstRow 依實際回傳筆數推進，達 total 或空頁即止。
+// 全程以 requests 計數卡住對外請求「總數」≤ MAX_PAGES，確保不逾越免費 subrequest 上限。
 async function scrapeAll () {
   const all = []
   const seenIds = new Set()
@@ -97,39 +104,24 @@ async function scrapeAll () {
     }
   }
 
-  // 1. 先打 firstRow=0 取得 total 與第一頁
-  const first = await fetchPage( 0 )
-  const total = first.total
-  pushUnique( first.list )
-  if ( total === 0 || first.list.length === 0 ) return all
-
-  // 3. 以第一頁長度推估 offset；6. 限制總頁數 ≤ MAX_PAGES
-  const pageSize = first.list.length
-  const offsets = []
-  for ( let off = pageSize; off < total && offsets.length < MAX_PAGES - 1; off += pageSize ) {
-    offsets.push( off )
+  let requests = 0
+  for ( const sectionCsv of SECTION_GROUPS ) {
+    let firstRow = 0
+    let groupCount = 0
+    let groupTotal = Infinity
+    while ( groupCount < groupTotal && requests < MAX_PAGES ) {
+      requests++
+      const page = await fetchPage( firstRow, sectionCsv )
+      groupTotal = page.total
+      if ( page.list.length === 0 ) break // 空頁 → 此組結束
+      pushUnique( page.list )
+      groupCount += page.list.length
+      firstRow += page.list.length
+    }
   }
 
-  // 若 total 過大導致頁數超限，記錄警告（只抓前 MAX_PAGES 頁）
-  if ( pageSize > 0 && Math.ceil( total / pageSize ) > MAX_PAGES ) {
-    console.warn( `total=${ total } 超過 MAX_PAGES=${ MAX_PAGES } 頁上限，僅抓前 ${ MAX_PAGES } 頁` )
-  }
-
-  // 4. 分批，每批最多 BATCH_SIZE 個並行；批與批之間 await
-  for ( const batch of chunk( offsets, BATCH_SIZE ) ) {
-    const pages = await Promise.all( batch.map( ( off ) => fetchPage( off ) ) )
-    pages.forEach( ( p ) => pushUnique( p.list ) )
-  }
-
-  // 5. 安全網：循序補抓（達 total / 回傳 0 筆 / 無新增 / 超過 guard 即停）
-  let guard = 0
-  while ( all.length < total && guard < SEQUENTIAL_GUARD ) {
-    guard++
-    const p = await fetchPage( all.length )
-    if ( p.list.length === 0 ) break
-    const before = all.length
-    pushUnique( p.list )
-    if ( all.length === before ) break // 沒有新增 → 停止
+  if ( requests >= MAX_PAGES ) {
+    console.warn( `對外請求數已達上限 MAX_PAGES=${ MAX_PAGES }，本週期可能未抓齊` )
   }
   return all
 }
