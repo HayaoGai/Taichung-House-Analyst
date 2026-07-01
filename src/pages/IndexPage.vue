@@ -54,7 +54,7 @@ async function onRefresh () {
     <q-toolbar>
       <q-toolbar-title class="row items-center no-wrap">
         <q-icon name="home_work" class="q-mr-sm" />
-        <span>591 待售物件監控</span>
+        <span>台中待售物件監控</span>
         <q-badge
           v-if="houses.length"
           color="white"
