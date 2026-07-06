@@ -62,7 +62,7 @@ pnpm dev
 1. 建立 KV namespace，並把回傳的 `id` 填入 `wrangler.jsonc` 的 `kv_namespaces[0].id`：
 
    ```bash
-   pnpm exec wrangler kv namespace create KV
+   pnpm exec wrangler kv namespace create HOUSES_KV
    ```
 
 2. 設定 LINE 推播所需的 Worker **執行時 secret**（與部署方式無關，設定後長期保留）：
@@ -112,7 +112,7 @@ pnpm dev
 8. （v0.0.2 升級者）一次性刪除舊的 `seen_ids` key（已由 `notified_keys` 取代）：
 
    ```bash
-   pnpm exec wrangler kv key delete --binding KV seen_ids
+   pnpm exec wrangler kv key delete --binding HOUSES_KV seen_ids
    ```
 
 ### 手動部署（備援）

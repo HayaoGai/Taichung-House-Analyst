@@ -18,7 +18,7 @@
   // 部署前請以 `wrangler kv namespace create KV` 建立，並把回傳的 id 填入下方。
   "kv_namespaces": [
     {
-      "binding": "KV",
+      "binding": "HOUSES_KV",
       "id": "8d3ac389a63943d38ca889cc33d4c0db"
     }
   ],

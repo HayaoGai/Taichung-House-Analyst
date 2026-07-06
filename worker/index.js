@@ -168,7 +168,7 @@ function pickFrontendFields ( h ) {
 
 // ── KV 存取 ──────────────────────────────────────────────────────────────────
 async function readMeta ( env ) {
-  const raw = await env.KV.get( 'meta' )
+  const raw = await env.HOUSES_KV.get( 'meta' )
   if ( !raw ) return null
   try {
     return JSON.parse( raw )
@@ -178,7 +178,7 @@ async function readMeta ( env ) {
 }
 
 async function readHouses ( env ) {
-  const raw = await env.KV.get( 'house_data' )
+  const raw = await env.HOUSES_KV.get( 'house_data' )
   if ( !raw ) return []
   try {
     const parsed = JSON.parse( raw )
@@ -203,7 +203,7 @@ function applyBlacklist ( houses, blacklist ) {
 
 // 黑名單（持久化、append-only；使用者按垃圾桶時追加）
 async function readBlacklist ( env ) {
-  const raw = await env.KV.get( 'blacklist' )
+  const raw = await env.HOUSES_KV.get( 'blacklist' )
   if ( !raw ) return []
   try {
     const parsed = JSON.parse( raw )
@@ -215,7 +215,7 @@ async function readBlacklist ( env ) {
 
 // 已通知過的 tripleKey 字串陣列（持久化、append-only；僅有新通知時寫入）
 async function readNotifiedKeys ( env ) {
-  const raw = await env.KV.get( 'notified_keys' )
+  const raw = await env.HOUSES_KV.get( 'notified_keys' )
   if ( !raw ) return []
   try {
     const parsed = JSON.parse( raw )
@@ -281,7 +281,7 @@ async function notifyNewHouses ( env, slim ) {
       await sendLinePush( env, buildLineText( newHouses ) )
       // 送出成功才寫回；用 Set 去重避免同鍵重複堆積
       const updated = [ ...new Set( notifiedKeys.concat( newHouses.map( matchKey ) ) ) ]
-      await env.KV.put( 'notified_keys', JSON.stringify( updated ) )
+      await env.HOUSES_KV.put( 'notified_keys', JSON.stringify( updated ) )
     }
     // 沒有新物件 → 不送 LINE、也不寫 notified_keys
   } catch ( err ) {
@@ -296,9 +296,9 @@ async function runCycle ( env ) {
     const raw = await scrapeAll()
     const filtered = filterHouses( raw )
     const slim = filtered.map( pickFrontendFields )
-    await env.KV.put( 'house_data', JSON.stringify( slim ) )
+    await env.HOUSES_KV.put( 'house_data', JSON.stringify( slim ) )
     const intervalSec = randomIntervalSec()
-    await env.KV.put( 'meta', JSON.stringify( {
+    await env.HOUSES_KV.put( 'meta', JSON.stringify( {
       lastUpdatedAt: now,
       nextRunAt: now + intervalSec * 1000,
       intervalSec,
@@ -310,7 +310,7 @@ async function runCycle ( env ) {
   } catch ( err ) {
     // 抓取失敗：保留上一份 house_data，僅延後下次嘗試（1 分鐘後重試）
     const prev = await readMeta( env )
-    await env.KV.put( 'meta', JSON.stringify( {
+    await env.HOUSES_KV.put( 'meta', JSON.stringify( {
       lastUpdatedAt: prev?.lastUpdatedAt ?? null,
       nextRunAt: now + 60 * 1000,
       intervalSec: 60,
@@ -381,7 +381,7 @@ export default {
       const exists = blacklist.some( ( b ) => matchKey( b ) === key )
       if ( !exists ) {
         blacklist.push( { price, room, houseage, address } )
-        await env.KV.put( 'blacklist', JSON.stringify( blacklist ) ) // 僅使用者操作時寫，頻率極低
+        await env.HOUSES_KV.put( 'blacklist', JSON.stringify( blacklist ) ) // 僅使用者操作時寫，頻率極低
       }
       return jsonResponse( { ok: true } )
     }
