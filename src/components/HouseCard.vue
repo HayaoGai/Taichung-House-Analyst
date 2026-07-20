@@ -25,10 +25,11 @@ const detailUrl = computed( () =>
   `https://sale.591.com.tw/home/house/detail/2/${ props.house?.houseid }.html`,
 )
 
-// Google 地圖搜尋連結
+// Google 地圖規劃路線連結：起點為房屋地址，目的地為廣福樸園精緻蔬食館，交通工具為機車
 const mapUrl = computed( () => {
-  const query = encodeURIComponent( `${ props.house?.section_name ?? '' } ${ props.house?.address ?? '' }` )
-  return `https://www.google.com/maps/search/?api=1&query=${ query }`
+  const origin = encodeURIComponent( `${ props.house?.section_name ?? '' } ${ props.house?.address ?? '' }` )
+  const destination = encodeURIComponent( '廣福樸園精緻蔬食館' )
+  return `https://www.google.com.tw/maps/dir/?api=1&origin=${ origin }&destination=${ destination }&travelmode=two-wheeler`
 } )
 
 function openDetail () {
