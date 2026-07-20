@@ -38,6 +38,13 @@ const mapUrl = computed( () => {
   return `https://www.google.com.tw/maps/dir/?api=1&origin=${ origin }&destination=${ destination }&travelmode=two-wheeler`
 } )
 
+// 實價登錄查詢連結：section_name 為三級行政區（如「西屯區」），address 為扣除縣市/行政區後的剩餘地址
+const realPriceUrl = computed( () => {
+  const district = encodeURIComponent( props.house?.section_name ?? '' )
+  const rest = encodeURIComponent( props.house?.address ?? '' )
+  return `https://price.houseprice.tw/list/台中市_city/${ district }_zip/${ rest }_kw/`
+} )
+
 function openDetail () {
   window.open( detailUrl.value, '_blank', 'noopener' )
 }
@@ -91,8 +98,19 @@ function openDetail () {
           </a>
         </div>
 
-        <div class="text-h6 text-negative text-weight-bold q-mt-sm">
-          {{ house.showprice }} 萬
+        <div class="row items-center q-gutter-x-sm q-mt-sm">
+          <div class="text-h6 text-negative text-weight-bold">
+            {{ house.showprice }} 萬
+          </div>
+          <a
+            :href="realPriceUrl"
+            target="_blank"
+            rel="noopener"
+            class="text-body2 text-primary real-price-link"
+            @click.stop
+          >
+            實價登錄
+          </a>
         </div>
       </q-card-section>
     </div>
@@ -167,6 +185,14 @@ function openDetail () {
 
 .address-link a {
   color: inherit;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.real-price-link {
   text-decoration: none;
 
   &:hover {
