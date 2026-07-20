@@ -53,7 +53,7 @@ const REQUEST_HEADERS = {
 
 function buildUrl ( firstRow, sectionCsv ) {
   const ts = Date.now()
-  return `https://bff-house.591.com.tw/v1/web/sale/list?timestamp=${ ts }&type=2&category=1&regionid=8&kind=9&price=$0_$1500&shape=3,4&houseage=$0_$25&section=${ sectionCsv }&firstRow=${ firstRow }&order=price_asc`
+  return `https://bff-house.591.com.tw/v1/web/sale/list?timestamp=${ ts }&type=2&category=1&regionid=8&kind=9&price=$500_$1500&shape=3,4&houseage=$0_$22&section=${ sectionCsv }&firstRow=${ firstRow }&order=price_asc`
 }
 
 // 帶逾時 + 單次重試（指數退避）的對外抓取
@@ -135,13 +135,18 @@ function filterHouses ( allHouses ) {
 
     // 規則 2：樓層（缺值視為空字串，依規則會被剔除）
     const floor = h.floor ?? ''
-    if ( floor === '整棟/1F' || ( !floor.includes( '整棟' ) && !floor.includes( '~' ) ) ) continue
+    if ( floor === '整棟/1F' || ( !floor.includes( '整棟' ) && !floor.includes( '1F~' ) ) ) continue
 
     // 規則 3：section_id 不在允許清單 → 剔除
     if ( !SECTION_ID_SET.has( Number( h.section_id ) ) ) continue
 
-    // 規則 4：屋齡 > 25 → 剔除（houseage 缺值/非數字時 Number 為 NaN，比較為 false，予以保留）
-    if ( Number( h.houseage ) > 25 ) continue
+    // 規則 4：屋齡缺值、非數字、等於 0、大於 22 → 剔除
+    const age = Number( h.houseage )
+    if ( !Number.isFinite( age ) || age === 0 || age > 22 ) continue
+
+    // 規則 5：總價 < 500 或 > 1500 → 剔除（缺值/非數字視同不合格，一併剔除）
+    const price = Number( h.price )
+    if ( !( price >= 500 && price <= 1500 ) ) continue
 
     result.push( h )
   }
