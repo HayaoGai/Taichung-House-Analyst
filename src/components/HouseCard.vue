@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps( {
   house: { type: Object, required: true },
@@ -13,6 +13,12 @@ const emit = defineEmits( [ 'blacklist' ] )
 const photo = computed( () => {
   const url = props.house?.photo_url ?? ''
   return url ? url.replace( '400x300', '1000xwater2' ) : ''
+} )
+
+// 照片載入失敗時改顯示「無照片」
+const photoError = ref( false )
+watch( photo, () => {
+  photoError.value = false
 } )
 
 // 地址顯示文字
@@ -45,19 +51,22 @@ function openDetail () {
     @click="openDetail"
   >
     <div class="row no-wrap">
-      <q-img
-        :src="photo"
-        class="house-card__photo"
-        ratio="1.333"
-        no-spinner
-        loading="lazy"
-      >
-        <template #error>
-          <div class="absolute-full flex flex-center bg-grey-9 text-grey-5">
-            無照片
-          </div>
-        </template>
-      </q-img>
+      <!-- 使用原生 img（非 q-img），讓 Hover Zoom+ 等擴充套件能直接偵測到圖片 -->
+      <div class="house-card__photo">
+        <img
+          v-if="photo && !photoError"
+          :src="photo"
+          :alt="house.title"
+          loading="lazy"
+          @error="photoError = true"
+        >
+        <div
+          v-else
+          class="house-card__photo-fallback flex flex-center bg-grey-9 text-grey-5"
+        >
+          無照片
+        </div>
+      </div>
 
       <q-card-section class="col house-card__body">
         <div class="text-subtitle1 text-weight-medium ellipsis-2-lines">
@@ -137,6 +146,18 @@ function openDetail () {
     width: 200px;
     min-width: 200px;
     height: 150px;
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    &-fallback {
+      width: 100%;
+      height: 100%;
+    }
   }
 
   &__body {
