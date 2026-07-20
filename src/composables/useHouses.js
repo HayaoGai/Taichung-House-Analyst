@@ -32,8 +32,9 @@ export function useHouses () {
   function applyPayload ( payload ) {
     const list = Array.isArray( payload?.houses ) ? payload.houses : []
     const meta = payload?.meta ?? {}
-    // 整批取代（先清空再填入），不做增量合併
-    houses.value = list
+    // 整批取代（先清空再填入），不做增量合併。
+    // 後端係逐個里區分組抓取後串接，合併後未必全域有序，故此處統一依總價由小到大排序。
+    houses.value = [ ...list ].sort( ( a, b ) => Number( a.price ) - Number( b.price ) )
     nextRunAt.value = typeof meta.nextRunAt === 'number' ? meta.nextRunAt : Date.now()
     lastUpdatedAt.value = meta.lastUpdatedAt ?? null
     lastStatus.value = meta.lastStatus ?? null
