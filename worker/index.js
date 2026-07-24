@@ -165,9 +165,11 @@ function pickFrontendFields ( h ) {
     address: h.address,
     showprice: h.showprice,
     photo_url: h.photo_url,
-    // 額外保留原始 price/houseage（不顯示，供黑名單與 LINE 去重比對；room 已於上方保留）
+    // 額外保留原始欄位（不顯示於前端）：price 供黑名單比對；houseage/linkman 供 LINE 通知的物件身分比對；room 已於上方保留。
+    // linkman 為 591 聯絡人（屋主 / 仲介），同一物件價格變動時不變，用來取代不穩定的 houseid。
     price: h.price,
     houseage: h.houseage,
+    linkman: h.linkman,
   }
 }
 
@@ -194,9 +196,16 @@ async function readHouses ( env ) {
 }
 
 // ── 黑名單 / 去重 helper ──────────────────────────────────────
-// 黑名單與 LINE 去重共用的比對鍵：price|room|houseage|address（四項皆相同視為同一筆）
+// 黑名單比對鍵：price|room|houseage|address（四項皆相同視為同一筆）
 function matchKey ( h ) {
   return `${ h.price }|${ h.room }|${ h.houseage }|${ h.address }`
+}
+
+// LINE 通知專用的「物件身分」鍵：room|houseage|address|linkman。
+// 刻意不含價格，故同一物件價格變動時身分不變，可辨識為「價格異動」而非「新物件」；
+// 亦不採用 591 的 houseid（實測不穩定）。與黑名單的 matchKey 分開維護。
+function notifyKey ( h ) {
+  return `${ h.room }|${ h.houseage }|${ h.address }|${ h.linkman }`
 }
 
 // 對房屋陣列套用黑名單（四項皆相同者過濾掉）
@@ -218,34 +227,59 @@ async function readBlacklist ( env ) {
   }
 }
 
-// 已通知過的 tripleKey 字串陣列（持久化、append-only；僅有新通知時寫入）
-async function readNotifiedKeys ( env ) {
-  const raw = await env.HOUSES_KV.get( 'notified_keys' )
-  if ( !raw ) return []
+// 各物件「上次通知時的價格」對照表：{ [notifyKey]: price }（持久化）
+// 回傳 null 代表尚未初始化（首次部署）；此時 notifyNewHouses 會靜默植入現況、不發通知，
+// 避免部署當下把全部既有物件當成新物件一次轟炸。
+async function readSeenPrices ( env ) {
+  const raw = await env.HOUSES_KV.get( 'seen_prices_v2' )
+  if ( !raw ) return null
   try {
     const parsed = JSON.parse( raw )
-    return Array.isArray( parsed ) ? parsed : []
+    return ( parsed && typeof parsed === 'object' && !Array.isArray( parsed ) ) ? parsed : null
   } catch {
-    return []
+    return null
   }
 }
 
-// 組 LINE 文字訊息（移除照片與地圖、格局/屋齡/樓層各自獨立成行）；超過 5000 字則截斷
-function buildLineText ( newHouses ) {
-  const blocks = newHouses.map( ( h ) => {
-    const detailUrl = `https://sale.591.com.tw/home/house/detail/2/${ h.houseid }.html`
-    return [
-      `🏠 ${ h.title }`,
-      `格局：${ h.room }`,
-      `屋齡：${ h.showhouseage }`,
-      `樓層：${ h.floor }`,
-      `地址：${ h.section_name } - ${ h.address }`,
-      `總價：${ h.showprice } 萬`,
-      `詳情：${ detailUrl }`,
-    ].join( '\n' )
-  } )
+function houseDetailUrl ( h ) {
+  return `https://sale.591.com.tw/home/house/detail/2/${ h.houseid }.html`
+}
 
-  let text = `🆕 新物件 ${ newHouses.length } 筆\n\n` + blocks.join( '\n\n' )
+// 新物件與價格異動共用的基本資訊行（標題、格局、屋齡、樓層、地址）
+function houseBaseLines ( h ) {
+  return [
+    `🏠 ${ h.title }`,
+    `格局：${ h.room }`,
+    `屋齡：${ h.showhouseage }`,
+    `樓層：${ h.floor }`,
+    `地址：${ h.section_name } - ${ h.address }`,
+  ]
+}
+
+// 組 LINE 文字訊息（移除照片與地圖、各欄位獨立成行）：含「新物件」與「價格異動」兩區塊；超過 5000 字則截斷
+function buildLineText ( newHouses, priceChanges ) {
+  const sections = []
+
+  if ( newHouses.length > 0 ) {
+    const blocks = newHouses.map( ( h ) => [
+      ...houseBaseLines( h ),
+      `總價：${ h.showprice } 萬`,
+      `詳情：${ houseDetailUrl( h ) }`,
+    ].join( '\n' ) )
+    sections.push( `🆕 新物件 ${ newHouses.length } 筆\n\n` + blocks.join( '\n\n' ) )
+  }
+
+  if ( priceChanges.length > 0 ) {
+    const blocks = priceChanges.map( ( { house, oldPrice, newPrice } ) => [
+      ...houseBaseLines( house ),
+      `原本價格：${ oldPrice } 萬`,
+      `現在價格：${ newPrice } 萬（${ newPrice < oldPrice ? '↓ 降價' : '↑ 漲價' }）`,
+      `詳情：${ houseDetailUrl( house ) }`,
+    ].join( '\n' ) )
+    sections.push( `💰 價格異動 ${ priceChanges.length } 筆\n\n` + blocks.join( '\n\n' ) )
+  }
+
+  let text = sections.join( '\n\n────────\n\n' )
   if ( text.length > LINE_TEXT_LIMIT ) {
     text = text.slice( 0, LINE_TEXT_LIMIT - 1 ) + '…' // 截斷（預期僅首次可能發生）
   }
@@ -269,26 +303,49 @@ async function sendLinePush ( env, text ) {
   }
 }
 
-// 通知區塊：先套黑名單，再以 price/room/houseage/address（matchKey）判斷是否已通知。
-// 以獨立 try/catch 包住，使 LINE 失敗不影響正常週期；失敗時不寫 notified_keys，下個週期自動重試。
+// 通知區塊：先套黑名單，再以 notifyKey（room|houseage|address|linkman，不含價格）追蹤各物件價格。
+//   1. 首次出現的 notifyKey → 新物件通知。
+//   2. 既有 notifyKey 但價格與上次不同 → 價格異動通知（附原本 / 現在價格）。
+// seen_prices_v2 為 null（首次部署）時：僅靜默植入現況、不發通知，避免把既有物件全部當新物件轟炸。
+// 以獨立 try/catch 包住，使 LINE 失敗不影響正常週期；失敗時不寫 seen_prices_v2，下個週期自動重試。
 async function notifyNewHouses ( env, slim ) {
   try {
-    const [ blacklist, notifiedKeys ] = await Promise.all( [
+    const [ blacklist, seenPrices ] = await Promise.all( [
       readBlacklist( env ),
-      readNotifiedKeys( env ),
+      readSeenPrices( env ),
     ] )
     const visible = applyBlacklist( slim, blacklist ) // 黑名單物件不顯示也不通知
-    const notifiedSet = new Set( notifiedKeys )
-    const newHouses = visible.filter( ( h ) => !notifiedSet.has( matchKey( h ) ) )
 
-    if ( newHouses.length > 0 ) {
-      // 一週期最多一次 push（單一 text 訊息，含全部新物件）
-      await sendLinePush( env, buildLineText( newHouses ) )
-      // 送出成功才寫回；用 Set 去重避免同鍵重複堆積
-      const updated = [ ...new Set( notifiedKeys.concat( newHouses.map( matchKey ) ) ) ]
-      await env.HOUSES_KV.put( 'notified_keys', JSON.stringify( updated ) )
+    // 首次部署（尚無 seen_prices_v2）：僅記錄現況，本週期不發通知
+    if ( seenPrices === null ) {
+      const seed = {}
+      for ( const h of visible ) seed[ notifyKey( h ) ] = Number( h.price )
+      await env.HOUSES_KV.put( 'seen_prices_v2', JSON.stringify( seed ) )
+      return
     }
-    // 沒有新物件 → 不送 LINE、也不寫 notified_keys
+
+    const newHouses = []
+    const priceChanges = []
+    for ( const h of visible ) {
+      const key = notifyKey( h )
+      const prev = seenPrices[ key ]
+      const cur = Number( h.price )
+      if ( prev === undefined ) {
+        newHouses.push( h )
+      } else if ( Number( prev ) !== cur ) {
+        priceChanges.push( { house: h, oldPrice: prev, newPrice: cur } )
+      }
+    }
+
+    if ( newHouses.length > 0 || priceChanges.length > 0 ) {
+      // 一週期最多一次 push（單一 text 訊息，含新物件與價格異動）
+      await sendLinePush( env, buildLineText( newHouses, priceChanges ) )
+      // 送出成功才寫回：更新所有可見物件的最新價格（涵蓋新物件、異動、未變動者）
+      const updated = { ...seenPrices }
+      for ( const h of visible ) updated[ notifyKey( h ) ] = Number( h.price )
+      await env.HOUSES_KV.put( 'seen_prices_v2', JSON.stringify( updated ) )
+    }
+    // 沒有新物件也沒有價格異動 → 不送 LINE、也不寫 seen_prices_v2
   } catch ( err ) {
     console.error( 'LINE notify step failed (will retry next cycle):', err )
   }
@@ -310,7 +367,7 @@ async function runCycle ( env ) {
       lastStatus: 'ok',
     } ) )
 
-    // 套黑名單後、首次出現（tripleKey）的物件 → LINE 通知 + 記錄 notified_keys（獨立 try/catch，不影響上方週期）
+    // 套黑名單後，依 houseid 判斷新物件與價格異動 → LINE 通知 + 記錄 seen_prices_v2（獨立 try/catch，不影響上方週期）
     await notifyNewHouses( env, slim )
   } catch ( err ) {
     // 抓取失敗：保留上一份 house_data，僅延後下次嘗試（1 分鐘後重試）
