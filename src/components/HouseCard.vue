@@ -45,8 +45,17 @@ const realPriceUrl = computed( () => {
   return `https://price.houseprice.tw/list/台中市_city/${ district }_zip/${ rest }_kw/`
 } )
 
+// 房價分析查詢連結（以 591 詳情頁網址作為查詢參數）
+const priceAnalyzeUrl = computed( () =>
+  `https://buy.houseprice.tw/priceanalyze/result?url=${ detailUrl.value }`,
+)
+
 function openDetail () {
   window.open( detailUrl.value, '_blank', 'noopener' )
+}
+
+function openPriceAnalyze () {
+  window.open( priceAnalyzeUrl.value, '_blank', 'noopener' )
 }
 </script>
 
@@ -102,6 +111,7 @@ function openDetail () {
           <div class="text-h6 text-negative text-weight-bold">
             {{ house.showprice }} 萬
           </div>
+          <span class="text-grey-8">( </span>
           <a
             :href="realPriceUrl"
             target="_blank"
@@ -111,6 +121,7 @@ function openDetail () {
           >
             實價登錄
           </a>
+          <span class="text-grey-8"> )</span>
         </div>
       </q-card-section>
     </div>
@@ -123,6 +134,19 @@ function openDetail () {
       🔄
       <q-tooltip>重複物件（與前面某筆的格局/屋齡/總價/地址皆相同）</q-tooltip>
     </div>
+
+    <!-- 右下角：房價分析（放大鏡）。@click.stop 避免觸發整張卡片導向詳情頁 -->
+    <q-btn
+      class="house-card__analyze"
+      icon="search"
+      color="grey-6"
+      flat
+      round
+      dense
+      @click.stop="openPriceAnalyze"
+    >
+      <q-tooltip>房價分析</q-tooltip>
+    </q-btn>
 
     <!-- 右下角：加入黑名單（垃圾桶）。@click.stop 避免觸發整張卡片導向詳情頁 -->
     <q-btn
@@ -146,6 +170,13 @@ function openDetail () {
   &__trash {
     position: absolute;
     right: 4px;
+    bottom: 4px;
+    z-index: 1;
+  }
+
+  &__analyze {
+    position: absolute;
+    right: 40px;
     bottom: 4px;
     z-index: 1;
   }
