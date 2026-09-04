@@ -8,10 +8,12 @@
     "directory": "./dist/spa",
     "not_found_handling": "single-page-application",
     "binding": "ASSETS",
-    // 讓 Worker 先處理 /api/*（否則 SPA fallback 會把 /api/* 也吃成 index.html）；
+    // 讓 Worker 先處理 API 路徑（否則 SPA fallback 會把它們也吃成 index.html）；
     // 其餘路徑仍由靜態資源直接服務（含 SPA fallback）。
+    // 注意 /owner 本身不列入：那是擁有者的頁面，要走 SPA fallback 回 index.html。
     "run_worker_first": [
-      "/api/*"
+      "/api/*",
+      "/owner/api/*"
     ]
   },
   // KV：單一 namespace，鍵為 house_data / meta

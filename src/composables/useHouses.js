@@ -31,7 +31,7 @@ function writeHidden ( keys ) {
 // 真實的倒數來源是後端 meta.nextRunAt；前端只負責顯示與在歸零後銜接，
 // 避免前後端時間不一致。
 export function useHouses () {
-  const { isOwner, ownerHeaders, clearOwner } = useOwner()
+  const { isOwner, ownerApi } = useOwner()
 
   const allHouses = ref( [] )
   const hiddenKeys = ref( readHidden() )
@@ -133,23 +133,40 @@ export function useHouses () {
     }
   }
 
+  // 寫入類端點（/owner/api/*）的共用 fetch。
+  //
+  // 這些路徑由 Cloudflare Access 保護，Access 工作階段過期時不會回我們的 JSON，而是
+  // 302 導向跨網域的登入頁。瀏覽器的 fetch 會跟著跳，結果可能是 redirected、拿到 HTML、
+  // 或直接因跨來源而 reject——三種都不是可用的回應，統一轉譯成 SESSION_EXPIRED，
+  // 由 UI 提示「重新整理頁面以重新登入」。（純網路故障也會落到這裡，但給的建議一樣有效。）
+  async function ownerFetch ( path, init ) {
+    let res
+    try {
+      res = await fetch( path, init )
+    } catch {
+      throw new Error( 'SESSION_EXPIRED' )
+    }
+    const contentType = res.headers.get( 'content-type' ) ?? ''
+    if ( res.redirected || !contentType.includes( 'application/json' ) ) {
+      throw new Error( 'SESSION_EXPIRED' )
+    }
+    if ( res.status === 403 ) throw new Error( 'FORBIDDEN' )
+    if ( !res.ok ) throw new Error( `${ init?.method ?? 'GET' } ${ path } ${ res.status }` )
+    return res
+  }
+
   // 擁有者專用的手動更新：後端會真的跑一次抓取週期（對外請求 + KV 寫入 + 可能的 LINE 推播），
-  // 故後端以 OWNER_TOKEN 把關；此處帶上 header，若回 403 代表 token 已失效。
+  // 故端點掛在 Access 保護的 /owner/api/ 底下，未通過驗證的請求根本到不了 Worker。
   async function refresh () {
     if ( refreshing.value ) return
     refreshing.value = true
     error.value = null
     stopPolling()
     try {
-      const res = await fetch( '/api/refresh', {
+      const res = await ownerFetch( ownerApi( 'refresh' ), {
         method: 'POST',
-        headers: { accept: 'application/json', ...ownerHeaders() },
+        headers: { accept: 'application/json' },
       } )
-      if ( res.status === 403 ) {
-        clearOwner() // 退回訪客模式，按鈕自動變成「重新載入」
-        throw new Error( 'FORBIDDEN' )
-      }
-      if ( !res.ok ) throw new Error( `POST /api/refresh ${ res.status }` )
       applyPayload( await res.json() )
     } catch ( e ) {
       error.value = e?.message ?? String( e )
@@ -192,16 +209,11 @@ export function useHouses () {
     const { price, room, houseage, address } = house
     allHouses.value = allHouses.value.filter( ( h ) => matchKey( h ) !== key )
     try {
-      const res = await fetch( '/api/blacklist', {
+      await ownerFetch( ownerApi( 'blacklist' ), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...ownerHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify( { price, room, houseage, address } ),
       } )
-      if ( res.status === 403 ) {
-        clearOwner()
-        throw new Error( 'FORBIDDEN' )
-      }
-      if ( !res.ok ) throw new Error( `POST /api/blacklist ${ res.status }` )
     } catch ( e ) {
       console.error( '加入黑名單失敗，可重新整理還原：', e )
     }

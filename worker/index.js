@@ -2,7 +2,7 @@
 // Cloudflare Worker：591 待售物件監控看板 後端
 //
 // 職責（單一 Worker 同時負責三件事）：
-//   1. fetch handler   → API 路由（/api/houses、/api/refresh），其餘交給靜態資源（SPA）
+//   1. fetch handler   → API 路由（/api/houses、/owner/api/*），其餘交給靜態資源（SPA）
 //   2. scheduled handler → Cron（每分鐘觸發），依 meta.nextRunAt 閘門決定是否真的抓取
 //   3. 抓取 / 篩選 / 寫入 KV
 //
@@ -12,6 +12,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── 常數 ──────────────────────────────────────────────────────────────
+// 擁有者專用前綴。寫入類端點掛在 /owner/api/* 底下，由 Cloudflare Access（Zero Trust）
+// 在邊緣把關；未通過驗證的請求根本到不了這個 Worker。
+// 前端的對應常數在 src/composables/useOwner.js，兩邊要一起改。
+const OWNER_PATH = 'owner'
+
 const SECTION_IDS = [ 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 116, 117, 118 ]
 const SECTION_ID_SET = new Set( SECTION_IDS )
 
@@ -414,25 +419,22 @@ function jsonResponse ( data, init = {} ) {
 }
 
 // ── 擁有者驗證 ────────────────────────────────────────────────────────────────
-// 本站對外公開（已移除 Cloudflare Access），但「會花掉免費額度」與「會改動個人資料」的端點
-// （/api/refresh、/api/blacklist）僅限本人。閘門必須放在這裡而不是前端——前端只藏按鈕的話，
-// 端點仍是公開的，F12 就能直接打。
+// 站台本身公開（供作品展示），但「會花掉免費額度」與「會改動個人資料」的端點僅限本人。
 //
-// token 以 Worker secret 提供：`wrangler secret put OWNER_TOKEN`，前端置於 x-owner-token header。
-// 未設定 secret 時一律視為非擁有者（安全預設：寧可自己也用不了，也不要整站門戶洞開）。
+// 閘門是 Cloudflare Access（Zero Trust），設定在 /owner 這個路徑上：Access 會涵蓋該路徑
+// 底下的所有子路徑，故 /owner/api/* 一併受保護，未通過驗證的請求根本到不了這個 Worker。
+//
+// 重點：閘門保護的是「API 路徑」而不是「頁面路徑」。若寫入端點留在 /api/* 而只把頁面
+// 放到 /owner，Access 完全擋不到它——curl 一下就繞過去了。這正是端點搬進 /owner/ 的原因。
+//
+// 這裡另外做一個零設定的存在性檢查（非密碼學驗證）：通過 Access 的請求一定帶有
+// Cf-Access-Jwt-Assertion header。若哪天 Access 應用被誤刪或路徑設錯，請求會不帶此 header
+// 抵達 Worker，此時直接回 403，而不是無聲地全開。它擋不住刻意偽造 header 的攻擊者
+// （那需要驗簽，得額外設定 team domain 與 AUD tag），但足以攔下意外暴露。
 function isOwner ( request, env ) {
-  const expected = env.OWNER_TOKEN
-  if ( !expected ) return false
-  return safeEqual( request.headers.get( 'x-owner-token' ) ?? '', expected )
-}
-
-// 定長比較，避免以回應時間逐字元試出 token。
-// 長度本身仍會外洩（提前 return），對此用途可接受。
-function safeEqual ( a, b ) {
-  if ( a.length !== b.length ) return false
-  let diff = 0
-  for ( let i = 0; i < a.length; i++ ) diff |= a.charCodeAt( i ) ^ b.charCodeAt( i )
-  return diff === 0
+  // 本機 wrangler dev 沒有 Access，以 .dev.vars 的旗標放行。正式環境切勿設定此變數。
+  if ( env.ALLOW_INSECURE_OWNER === 'true' ) return true
+  return request.headers.has( 'cf-access-jwt-assertion' )
 }
 
 function forbidden () {
@@ -463,10 +465,10 @@ export default {
       } )
     }
 
-    // POST /api/refresh：立即跑一次 runCycle（含重置隨機 nextRunAt），回傳最新資料
+    // POST /owner/api/refresh：立即跑一次 runCycle（含重置隨機 nextRunAt），回傳最新資料
     // 僅限擁有者：一次 runCycle 會產生 2~3 次 KV 寫入（免費上限 1000/日，cron 本身已用掉約七成），
     // 且可能觸發 LINE 推播，故絕不開放給訪客。
-    if ( url.pathname === '/api/refresh' && request.method === 'POST' ) {
+    if ( url.pathname === `/${ OWNER_PATH }/api/refresh` && request.method === 'POST' ) {
       if ( !isOwner( request, env ) ) return forbidden()
       const meta = await readMeta( env )
       const now = Date.now()
@@ -478,10 +480,10 @@ export default {
       return jsonResponse( await buildHousesPayload( env ) )
     }
 
-    // POST /api/blacklist：將 price/room/houseage/address 加入黑名單
+    // POST /owner/api/blacklist：將 price/room/houseage/address 加入黑名單
     // 僅限擁有者：黑名單是個人化的長期資料，訪客若能寫入會永久污染本人的看板。
     // 訪客端的垃圾桶改為純前端隱藏（見 src/composables/useHouses.js），不經過此端點。
-    if ( url.pathname === '/api/blacklist' && request.method === 'POST' ) {
+    if ( url.pathname === `/${ OWNER_PATH }/api/blacklist` && request.method === 'POST' ) {
       if ( !isOwner( request, env ) ) return forbidden()
       let body
       try {
@@ -503,8 +505,9 @@ export default {
       return jsonResponse( { ok: true } )
     }
 
-    // 其他 /api/* 一律回 404（避免落到 SPA fallback）
-    if ( url.pathname.startsWith( '/api/' ) ) {
+    // 其他 API 路徑一律回 404（避免落到 SPA fallback）。
+    // /owner/api/* 也要涵蓋，否則未匹配的擁有者端點會被當成頁面而回傳 index.html。
+    if ( url.pathname.startsWith( '/api/' ) || url.pathname.startsWith( `/${ OWNER_PATH }/api/` ) ) {
       return jsonResponse( { error: 'Not Found' }, { status: 404 } )
     }
 

@@ -29,9 +29,14 @@ export default defineConfig( () => {
     devServer: {
       open: false,
       port: 9000,
-      // 本機開發時，把 /api 代理到 wrangler dev（預設 8787），模擬正式環境同源行為
+      // 本機開發時，把 API 代理到 wrangler dev（預設 8787），模擬正式環境同源行為。
+      // 只代理 /owner/api，不代理整個 /owner——後者是擁有者頁面，要交給 dev server 的 SPA fallback。
       proxy: {
         '/api': {
+          target: 'http://localhost:8787',
+          changeOrigin: true,
+        },
+        '/owner/api': {
           target: 'http://localhost:8787',
           changeOrigin: true,
         },

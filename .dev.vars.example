@@ -4,7 +4,9 @@
 LINE_CHANNEL_ACCESS_TOKEN=your-line-channel-access-token
 LINE_USER_ID=your-line-user-id
 
-# 擁有者權杖：/api/refresh 與 /api/blacklist 僅接受帶有 x-owner-token: <此值> 的請求。
-# 未設定時所有寫入類端點一律回 403（安全預設），本機開發請隨意填一組字串。
-# 產生方式建議：openssl rand -hex 32
-OWNER_TOKEN=your-owner-token
+# 本機放行擁有者端點（/owner/api/*）。
+# 正式環境的閘門是 Cloudflare Access，但本機 wrangler dev 沒有 Access，
+# 請求不會帶 Cf-Access-Jwt-Assertion header，因此需要這個旗標才能在本機測試寫入功能。
+#
+# ⚠️ 絕對不要在正式環境設定這個變數 —— 設了等於把寫入端點完全對外開放。
+ALLOW_INSECURE_OWNER=true

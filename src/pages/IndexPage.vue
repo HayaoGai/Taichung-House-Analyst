@@ -75,10 +75,14 @@ async function onAction () {
       await refresh()
       $q.notify( { type: 'positive', message: '已更新最新物件', timeout: 1500 } )
     } catch ( e ) {
-      const message = e?.message === 'FORBIDDEN'
-        ? '更新權限已失效，已切換為唯讀模式'
-        : '更新失敗，已保留上一份資料'
-      $q.notify( { type: 'negative', message, timeout: 2500 } )
+      const messages = {
+        // Access 工作階段過期：重新整理會觸發 Access 重新登入
+        SESSION_EXPIRED: '登入工作階段可能已過期，請重新整理頁面',
+        // 走到這裡代表請求沒帶 Access 憑證（例如 Access 應用被停用或路徑設錯）
+        FORBIDDEN: '未通過 Access 驗證，請確認 Zero Trust 設定',
+      }
+      const message = messages[ e?.message ] ?? '更新失敗，已保留上一份資料'
+      $q.notify( { type: 'negative', message, timeout: 3000 } )
     }
     return
   }
