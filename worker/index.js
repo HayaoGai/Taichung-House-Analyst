@@ -29,7 +29,10 @@ const SECTION_GROUPS = ( () => {
 
 const MAX_PAGES = 45 // 每週期對外請求「總數」上限（保守，免費 subrequest 上限 50）
 const FETCH_TIMEOUT_MS = 10000 // 單次對外請求逾時
-const REFRESH_DEBOUNCE_MS = 10000 // /api/refresh 防連點：距上次更新 < 10 秒則略過實際抓取
+// /api/refresh 防連點：距上次「嘗試」更新 < 60 秒則略過實際抓取。
+// 刻意以「嘗試」而非「成功」計時（見 meta.lastRefreshAt），使抓取連續失敗時防連點依然有效，
+// 否則失敗狀態下 lastUpdatedAt 不會前進，等同於完全沒有防連點。
+const REFRESH_DEBOUNCE_MS = 60000
 
 // LINE 推播
 const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push'
@@ -352,8 +355,12 @@ async function notifyNewHouses ( env, slim ) {
 }
 
 // ── 完整週期（runCycle） ──────────────────────────────────────────
-async function runCycle ( env ) {
+// extraMeta：由呼叫端補寫進 meta 的欄位（目前僅 /api/refresh 用來記 lastRefreshAt）。
+// 成功與失敗兩條路徑都會寫入，故「嘗試過就算數」，抓取失敗時防連點依然成立。
+// lastRefreshAt 由 prev 承接後再被 extraMeta 覆蓋，避免 cron 週期把它洗掉。
+async function runCycle ( env, extraMeta = {} ) {
   const now = Date.now()
+  const prev = await readMeta( env )
   try {
     const raw = await scrapeAll()
     const filtered = filterHouses( raw )
@@ -365,18 +372,21 @@ async function runCycle ( env ) {
       nextRunAt: now + intervalSec * 1000,
       intervalSec,
       lastStatus: 'ok',
+      lastRefreshAt: prev?.lastRefreshAt ?? null,
+      ...extraMeta,
     } ) )
 
     // 套黑名單後，依 houseid 判斷新物件與價格異動 → LINE 通知 + 記錄 seen_prices_v2（獨立 try/catch，不影響上方週期）
     await notifyNewHouses( env, slim )
   } catch ( err ) {
     // 抓取失敗：保留上一份 house_data，僅延後下次嘗試（1 分鐘後重試）
-    const prev = await readMeta( env )
     await env.HOUSES_KV.put( 'meta', JSON.stringify( {
       lastUpdatedAt: prev?.lastUpdatedAt ?? null,
       nextRunAt: now + 60 * 1000,
       intervalSec: 60,
       lastStatus: 'error',
+      lastRefreshAt: prev?.lastRefreshAt ?? null,
+      ...extraMeta,
     } ) )
     console.error( 'runCycle failed:', err )
   }
@@ -403,6 +413,32 @@ function jsonResponse ( data, init = {} ) {
   } )
 }
 
+// ── 擁有者驗證 ────────────────────────────────────────────────────────────────
+// 本站對外公開（已移除 Cloudflare Access），但「會花掉免費額度」與「會改動個人資料」的端點
+// （/api/refresh、/api/blacklist）僅限本人。閘門必須放在這裡而不是前端——前端只藏按鈕的話，
+// 端點仍是公開的，F12 就能直接打。
+//
+// token 以 Worker secret 提供：`wrangler secret put OWNER_TOKEN`，前端置於 x-owner-token header。
+// 未設定 secret 時一律視為非擁有者（安全預設：寧可自己也用不了，也不要整站門戶洞開）。
+function isOwner ( request, env ) {
+  const expected = env.OWNER_TOKEN
+  if ( !expected ) return false
+  return safeEqual( request.headers.get( 'x-owner-token' ) ?? '', expected )
+}
+
+// 定長比較，避免以回應時間逐字元試出 token。
+// 長度本身仍會外洩（提前 return），對此用途可接受。
+function safeEqual ( a, b ) {
+  if ( a.length !== b.length ) return false
+  let diff = 0
+  for ( let i = 0; i < a.length; i++ ) diff |= a.charCodeAt( i ) ^ b.charCodeAt( i )
+  return diff === 0
+}
+
+function forbidden () {
+  return jsonResponse( { error: 'Forbidden' }, { status: 403 } )
+}
+
 // ── Worker 入口 ──────────────────────────────────────────────────────────────
 export default {
   // Cron（每分鐘觸發）：依 nextRunAt 閘門決定是否真的執行抓取週期
@@ -418,26 +454,45 @@ export default {
   async fetch ( request, env ) {
     const url = new URL( request.url )
 
-    // GET /api/houses：從 KV 讀最新資料 + meta
+    // GET /api/houses：從 KV 讀最新資料 + meta（公開；只讀，成本僅 KV read）
+    // 帶 10 秒瀏覽器快取：抓取週期本就是 4~6 分鐘，10 秒內的重覆請求（連點、輪詢）
+    // 直接由瀏覽器擋下，不打到 Worker。private 表示只讓瀏覽器快取、不讓中介 CDN 共用。
     if ( url.pathname === '/api/houses' && request.method === 'GET' ) {
-      return jsonResponse( await buildHousesPayload( env ) )
+      return jsonResponse( await buildHousesPayload( env ), {
+        headers: { 'cache-control': 'private, max-age=10' },
+      } )
     }
 
     // POST /api/refresh：立即跑一次 runCycle（含重置隨機 nextRunAt），回傳最新資料
+    // 僅限擁有者：一次 runCycle 會產生 2~3 次 KV 寫入（免費上限 1000/日，cron 本身已用掉約七成），
+    // 且可能觸發 LINE 推播，故絕不開放給訪客。
     if ( url.pathname === '/api/refresh' && request.method === 'POST' ) {
+      if ( !isOwner( request, env ) ) return forbidden()
       const meta = await readMeta( env )
       const now = Date.now()
-      // 防連點：距上次成功更新 < 10 秒則略過實際抓取，直接回現有資料
-      const tooSoon = meta?.lastUpdatedAt != null && ( now - meta.lastUpdatedAt ) < REFRESH_DEBOUNCE_MS
+      // 防連點：距上次「嘗試」更新 < REFRESH_DEBOUNCE_MS 則略過實際抓取，直接回現有資料
+      const tooSoon = meta?.lastRefreshAt != null && ( now - meta.lastRefreshAt ) < REFRESH_DEBOUNCE_MS
       if ( !tooSoon ) {
-        await runCycle( env )
+        await runCycle( env, { lastRefreshAt: now } )
       }
       return jsonResponse( await buildHousesPayload( env ) )
     }
 
     // POST /api/blacklist：將 price/room/houseage/address 加入黑名單
+    // 僅限擁有者：黑名單是個人化的長期資料，訪客若能寫入會永久污染本人的看板。
+    // 訪客端的垃圾桶改為純前端隱藏（見 src/composables/useHouses.js），不經過此端點。
     if ( url.pathname === '/api/blacklist' && request.method === 'POST' ) {
-      const { price, room, houseage, address } = await request.json()
+      if ( !isOwner( request, env ) ) return forbidden()
+      let body
+      try {
+        body = await request.json()
+      } catch {
+        return jsonResponse( { error: 'Bad Request' }, { status: 400 } )
+      }
+      const { price, room, houseage, address } = body ?? {}
+      if ( price == null || room == null || houseage == null || address == null ) {
+        return jsonResponse( { error: 'Bad Request' }, { status: 400 } )
+      }
       const blacklist = await readBlacklist( env )
       const key = matchKey( { price, room, houseage, address } )
       const exists = blacklist.some( ( b ) => matchKey( b ) === key )

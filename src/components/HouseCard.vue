@@ -5,6 +5,8 @@ const props = defineProps( {
   house: { type: Object, required: true },
   // 重複物件（price/room/houseage/address 與前面某筆皆相同）→ 右上角顯示 🔄
   duplicate: { type: Boolean, default: false },
+  // 擁有者模式：影響垃圾桶的說明文字（擁有者寫入後端黑名單，訪客只在自己的瀏覽器隱藏）
+  owner: { type: Boolean, default: false },
 } )
 
 const emit = defineEmits( [ 'blacklist' ] )
@@ -157,7 +159,11 @@ function openPriceAnalyze () {
       dense
       @click.stop="emit( 'blacklist', house )"
     >
-      <q-tooltip>加入黑名單（隱藏相同格局/屋齡/總價的物件）</q-tooltip>
+      <q-tooltip>
+        {{ owner
+          ? '加入黑名單（隱藏相同格局/屋齡/總價的物件）'
+          : '隱藏此物件（僅存在您自己的瀏覽器，不影響其他人）' }}
+      </q-tooltip>
     </q-btn>
   </q-card>
 </template>

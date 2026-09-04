@@ -7,6 +7,7 @@ import HouseCard from 'components/HouseCard.vue'
 const $q = useQuasar()
 const {
   houses,
+  isOwner,
   lastUpdatedAt,
   lastStatus,
   countdown,
@@ -14,6 +15,7 @@ const {
   refreshing,
   error,
   refresh,
+  reload,
   blacklistHouse,
 } = useHouses()
 
@@ -65,12 +67,27 @@ const lastUpdatedText = computed( () => {
   return `${ pad( d.getHours() ) }:${ pad( d.getMinutes() ) }:${ pad( d.getSeconds() ) }`
 } )
 
-async function onRefresh () {
+// 右上角按鈕：擁有者是「手動更新」（真的觸發後端抓取），訪客是「重新載入」（只重讀 KV）。
+// 兩者的差異在於成本——訪客的操作不寫 KV、不對外抓取、不推播，故可以安心公開。
+async function onAction () {
+  if ( isOwner.value ) {
+    try {
+      await refresh()
+      $q.notify( { type: 'positive', message: '已更新最新物件', timeout: 1500 } )
+    } catch ( e ) {
+      const message = e?.message === 'FORBIDDEN'
+        ? '更新權限已失效，已切換為唯讀模式'
+        : '更新失敗，已保留上一份資料'
+      $q.notify( { type: 'negative', message, timeout: 2500 } )
+    }
+    return
+  }
+
   try {
-    await refresh()
-    $q.notify( { type: 'positive', message: '已更新最新物件', timeout: 1500 } )
+    await reload()
+    $q.notify( { type: 'positive', message: '已重新載入', timeout: 1500 } )
   } catch {
-    $q.notify( { type: 'negative', message: '更新失敗，已保留上一份資料', timeout: 2500 } )
+    $q.notify( { type: 'negative', message: '載入失敗，已保留上一份資料', timeout: 2500 } )
   }
 }
 </script>
@@ -107,12 +124,16 @@ async function onRefresh () {
         <q-btn
           color="white"
           text-color="primary"
-          icon="refresh"
-          label="手動更新"
+          :icon="isOwner ? 'refresh' : 'sync'"
+          :label="isOwner ? '手動更新' : '重新載入'"
           unelevated
           :loading="refreshing"
-          @click="onRefresh"
-        />
+          @click="onAction"
+        >
+          <q-tooltip v-if="!isOwner">
+            重新讀取後端最新結果（抓取由後端每 4~6 分鐘自動執行）
+          </q-tooltip>
+        </q-btn>
       </div>
     </q-toolbar>
   </q-header>
@@ -149,6 +170,15 @@ async function onRefresh () {
           >
             上次抓取失敗，顯示為前一份資料
           </q-badge>
+        </div>
+
+        <!-- 訪客提示：說明這是唯讀展示，垃圾桶只會隱藏在自己的瀏覽器裡 -->
+        <div v-if="!isOwner">
+          唯讀展示模式
+          <q-icon name="info_outline" size="14px" class="q-ml-xs" />
+          <q-tooltip max-width="260px">
+            資料由後端每 4~6 分鐘自動抓取更新。垃圾桶按鈕只會在您自己的瀏覽器隱藏該物件，不會影響其他人。
+          </q-tooltip>
         </div>
       </div>
 
@@ -196,6 +226,7 @@ async function onRefresh () {
             :key="item.houseid"
             :house="item"
             :duplicate="item._duplicate"
+            :owner="isOwner"
             class="q-mb-md"
             @blacklist="blacklistHouse"
           />

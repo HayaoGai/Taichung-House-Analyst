@@ -3,3 +3,8 @@
 # 正式環境請改用：npx wrangler secret put <名稱>
 LINE_CHANNEL_ACCESS_TOKEN=your-line-channel-access-token
 LINE_USER_ID=your-line-user-id
+
+# 擁有者權杖：/api/refresh 與 /api/blacklist 僅接受帶有 x-owner-token: <此值> 的請求。
+# 未設定時所有寫入類端點一律回 403（安全預設），本機開發請隨意填一組字串。
+# 產生方式建議：openssl rand -hex 32
+OWNER_TOKEN=your-owner-token
