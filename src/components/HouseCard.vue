@@ -33,9 +33,8 @@ const detailUrl = computed( () =>
 
 // Google 地圖規劃路線連結：起點為房屋地址，目的地為廣福樸園精緻蔬食館，交通工具為機車
 const mapUrl = computed( () => {
-  const origin = encodeURIComponent( `${ props.house?.section_name ?? '' } ${ props.house?.address ?? '' }` )
-  const destination = encodeURIComponent( '廣福樸園精緻蔬食館' )
-  return `https://www.google.com.tw/maps/dir/?api=1&origin=${ origin }&destination=${ destination }&travelmode=two-wheeler`
+  const target = encodeURIComponent( `${ props.house?.section_name ?? '' } ${ props.house?.address ?? '' }` )
+  return `https://www.google.com.tw/maps/place/${ target }`
 } )
 
 // 實價登錄查詢連結：section_name 為三級行政區（如「西屯區」），address 為扣除縣市/行政區後的剩餘地址
