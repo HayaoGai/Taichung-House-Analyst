@@ -10,6 +10,7 @@ const {
   isOwner,
   lastUpdatedAt,
   lastStatus,
+  lastError,
   countdown,
   loading,
   refreshing,
@@ -59,6 +60,16 @@ const filteredHouses = computed( () =>
     ? decoratedHouses.value.filter( ( h ) => h.section_name === selectedDistrict.value )
     : decoratedHouses.value,
 )
+
+// 抓取失敗時，狀態徽章的 tooltip 直接顯示原因（含 591 回的狀態碼），免得只看得到「失敗」兩字。
+const lastErrorText = computed( () => {
+  const e = lastError.value
+  if ( !e?.message ) return ''
+  const at = e.at ? new Date( e.at ) : null
+  const pad = ( n ) => String( n ).padStart( 2, '0' )
+  const stamp = at ? `${ pad( at.getHours() ) }:${ pad( at.getMinutes() ) }:${ pad( at.getSeconds() ) } ` : ''
+  return `${ stamp }${ e.message }`
+} )
 
 const lastUpdatedText = computed( () => {
   if ( !lastUpdatedAt.value ) return '尚未更新'
@@ -170,9 +181,13 @@ async function onAction () {
             v-if="lastStatus === 'error'"
             color="warning"
             text-color="dark"
-            class="q-ml-xs"
+            class="q-ml-xs cursor-pointer"
           >
             上次抓取失敗，顯示為前一份資料
+            <q-icon name="info_outline" size="12px" class="q-ml-xs" />
+            <q-tooltip v-if="lastErrorText" max-width="360px" class="text-caption">
+              {{ lastErrorText }}
+            </q-tooltip>
           </q-badge>
         </div>
 

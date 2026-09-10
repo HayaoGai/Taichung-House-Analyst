@@ -38,6 +38,7 @@ export function useHouses () {
   const nextRunAt = ref( Date.now() )
   const lastUpdatedAt = ref( null )
   const lastStatus = ref( null )
+  const lastError = ref( null ) // { at, message }；抓取失敗的原因，成功時由後端清為 null
   const now = ref( Date.now() )
 
   const loading = ref( false ) // 初次載入中
@@ -75,6 +76,7 @@ export function useHouses () {
     nextRunAt.value = typeof meta.nextRunAt === 'number' ? meta.nextRunAt : Date.now()
     lastUpdatedAt.value = meta.lastUpdatedAt ?? null
     lastStatus.value = meta.lastStatus ?? null
+    lastError.value = meta.lastError ?? null
   }
 
   async function fetchHouses () {
@@ -241,6 +243,7 @@ export function useHouses () {
     nextRunAt,
     lastUpdatedAt,
     lastStatus,
+    lastError,
     countdown,
     remainingMs,
     loading,

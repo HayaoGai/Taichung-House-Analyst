@@ -74,7 +74,7 @@ async function fetchPage ( firstRow, sectionCsv, attempt = 0 ) {
       headers: REQUEST_HEADERS,
       signal: controller.signal,
     } )
-    if ( !res.ok ) throw new Error( `591 API ${ res.status } @ firstRow=${ firstRow }` )
+    if ( !res.ok ) throw new Error( await describeHttpFailure( res, firstRow, sectionCsv ) )
     const json = await res.json()
     return {
       total: Number( json?.data?.total ?? 0 ),
@@ -90,6 +90,22 @@ async function fetchPage ( firstRow, sectionCsv, attempt = 0 ) {
   } finally {
     clearTimeout( timer )
   }
+}
+
+// 把失敗回應整理成一行可讀訊息，寫進 meta.lastError 供前端顯示與日後排查。
+// 只帶「定位得到原因」的最小資訊：狀態碼、是哪一組查詢、以及回應是不是攔截頁。
+// 591 被 CDN / WAF 擋下時回的是整頁 HTML（實測約 34KB），故只取 <title> 與 server，不整份留存。
+async function describeHttpFailure ( res, firstRow, sectionCsv ) {
+  let hint = ''
+  try {
+    const body = await res.text()
+    const title = body.match( /<title>([^<]*)<\/title>/i )?.[ 1 ]?.trim()
+    // 回應是 HTML 而非 JSON，代表請求根本沒進到 591 的 API 應用層（多半在 CDN / WAF 就被擋掉）。
+    hint = title
+      ? `｜攔截頁「${ title }」，server=${ res.headers.get( 'server' ) ?? '?' }`
+      : `｜${ body.slice( 0, 200 ).replace( /\s+/g, ' ' ).trim() }`
+  } catch { /* 讀不到 body 就算了，狀態碼已足以定位 */ }
+  return `591 API ${ res.status }（section=${ sectionCsv }, firstRow=${ firstRow }）${ hint }`
 }
 
 function sleep ( ms ) {
@@ -378,6 +394,7 @@ async function runCycle ( env, extraMeta = {} ) {
       intervalSec,
       lastStatus: 'ok',
       lastRefreshAt: prev?.lastRefreshAt ?? null,
+      lastError: null, // 成功即清空，避免前端顯示早已修好的舊錯誤
       ...extraMeta,
     } ) )
 
@@ -391,6 +408,9 @@ async function runCycle ( env, extraMeta = {} ) {
       intervalSec: 60,
       lastStatus: 'error',
       lastRefreshAt: prev?.lastRefreshAt ?? null,
+      // 只有 lastStatus: 'error' 看不出是 403、逾時還是解析失敗，得翻 Worker 日誌才查得到；
+      // 把原因一併留在 meta 裡，前端與 curl /api/houses 都能直接看到。
+      lastError: { at: now, message: String( err?.message ?? err ).slice( 0, 500 ) },
       ...extraMeta,
     } ) )
     console.error( 'runCycle failed:', err )
@@ -407,7 +427,7 @@ async function buildHousesPayload ( env ) {
   ] )
   return {
     houses: applyBlacklist( houses, blacklist ),
-    meta: meta ?? { lastUpdatedAt: null, nextRunAt: Date.now(), lastStatus: null },
+    meta: meta ?? { lastUpdatedAt: null, nextRunAt: Date.now(), lastStatus: null, lastError: null },
   }
 }
 
